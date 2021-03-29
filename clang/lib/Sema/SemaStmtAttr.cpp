@@ -17,6 +17,7 @@
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/ScopeInfo.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
 using namespace sema;
@@ -75,6 +76,8 @@ static Attr *handleSuppressAttr(Sema &S, Stmt *St, const ParsedAttr &A,
 
 static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const ParsedAttr &A,
                                 SourceRange) {
+
+  llvm::errs() << "handleLoopHintAttr\n";
   IdentifierLoc *PragmaNameLoc = A.getArgAsIdent(0);
   IdentifierLoc *OptionLoc = A.getArgAsIdent(1);
   IdentifierLoc *StateLoc = A.getArgAsIdent(2);
@@ -170,8 +173,7 @@ static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const ParsedAttr &A,
   return LoopHintAttr::CreateImplicit(S.Context, Option, State, ValueExpr, A);
 }
 
-static void
-CheckForIncompatibleAttributes(Sema &S,
+static void CheckForIncompatibleAttributes(Sema &S,
                                const SmallVectorImpl<const Attr *> &Attrs) {
   // There are 6 categories of loop hints attributes: vectorize, interleave,
   // unroll, unroll_and_jam, pipeline and distribute. Except for distribute they
@@ -318,8 +320,36 @@ static Attr *handleOpenCLUnrollHint(Sema &S, Stmt *St, const ParsedAttr &A,
   return OpenCLUnrollHintAttr::CreateImplicit(S.Context, UnrollFactor);
 }
 
+
+static Attr *handleQualityAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceRange Range) {
+  llvm::errs() << "handleQualityAttr\n";
+  IdentifierLoc *PragmaNameLoc = A.getArgAsIdent(0);
+  IdentifierLoc *OptionLoc = A.getArgAsIdent(1);
+  Expr *ValueExpr = nullptr;
+  Expr *ValueExprF = nullptr;
+  bool PragmaMain = OptionLoc->Ident->getName() == "main";
+  bool PragmaFunct = OptionLoc->Ident->getName() == "funct";
+  QualityAttr::OptionType Option;
+  if (PragmaMain) {
+    Option = QualityAttr::Main;
+    ValueExpr = A.getArgAsExpr(2);
+  } else if (PragmaFunct) {
+    Option = QualityAttr::Funct;
+    ValueExprF = A.getArgAsExpr(2);
+    ValueExpr = A.getArgAsExpr(3);
+  } else {
+    printf("Error, no main or funct\n");
+  }
+  if (!ValueExpr) {
+    printf("Error in Sema getting N\n");
+  }
+  return QualityAttr::CreateImplicit(S.Context, Option, ValueExprF, ValueExpr, A.getRange());
+}
+
+
 static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
                                   SourceRange Range) {
+                                  llvm::errs() << "ProcessStmtAttribute -> " << A.getKind() << "\n";
   switch (A.getKind()) {
   case ParsedAttr::UnknownAttribute:
     S.Diag(A.getLoc(), A.isDeclspecAttribute()
@@ -329,6 +359,8 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
     return nullptr;
   case ParsedAttr::AT_FallThrough:
     return handleFallThroughAttr(S, St, A, Range);
+  case ParsedAttr::AT_Quality:
+    return handleQualityAttr(S, St, A, Range);
   case ParsedAttr::AT_LoopHint:
     return handleLoopHintAttr(S, St, A, Range);
   case ParsedAttr::AT_OpenCLUnrollHint:

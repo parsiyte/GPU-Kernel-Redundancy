@@ -20,6 +20,9 @@
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/Scope.h"
 #include "llvm/ADT/StringSwitch.h"
+
+#include "clang/Sema/QualityHint.h"
+#include <stdio.h>
 using namespace clang;
 
 namespace {
@@ -213,6 +216,14 @@ private:
   Sema &Actions;
 };
 
+
+
+struct PragmaQualityHandler : public PragmaHandler {
+  PragmaQualityHandler() : PragmaHandler("quality") {}
+  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
+                    Token &FirstToken) override;
+};
+
 struct PragmaLoopHintHandler : public PragmaHandler {
   PragmaLoopHintHandler() : PragmaHandler("loop") {}
   void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
@@ -304,6 +315,8 @@ void Parser::initializePragmaHandlers() {
   PCSectionHandler = std::make_unique<PragmaClangSectionHandler>(Actions);
   PP.AddPragmaHandler("clang", PCSectionHandler.get());
 
+
+
   if (getLangOpts().OpenCL) {
     OpenCLExtensionHandler = std::make_unique<PragmaOpenCLExtensionHandler>();
     PP.AddPragmaHandler("OPENCL", OpenCLExtensionHandler.get());
@@ -358,6 +371,9 @@ void Parser::initializePragmaHandlers() {
 
   OptimizeHandler = std::make_unique<PragmaOptimizeHandler>(Actions);
   PP.AddPragmaHandler("clang", OptimizeHandler.get());
+
+  QualityHandler = std::make_unique<PragmaQualityHandler>();
+  PP.AddPragmaHandler(QualityHandler.get());
 
   LoopHintHandler = std::make_unique<PragmaLoopHintHandler>();
   PP.AddPragmaHandler("clang", LoopHintHandler.get());
@@ -466,6 +482,9 @@ void Parser::resetPragmaHandlers() {
 
   PP.RemovePragmaHandler("clang", OptimizeHandler.get());
   OptimizeHandler.reset();
+
+  PP.RemovePragmaHandler(QualityHandler.get());
+  QualityHandler.reset();
 
   PP.RemovePragmaHandler("clang", LoopHintHandler.get());
   LoopHintHandler.reset();
@@ -997,6 +1016,17 @@ bool Parser::HandlePragmaMSInitSeg(StringRef PragmaName,
   return true;
 }
 
+
+namespace {
+struct PragmaQualityInfo {
+  Token PragmaName;
+  Token Option;
+  ArrayRef<Token> Toks;
+};
+} // end anonymous namespace
+
+
+
 namespace {
 struct PragmaLoopHintInfo {
   Token PragmaName;
@@ -1014,6 +1044,48 @@ static std::string PragmaLoopHintString(Token PragmaName, Token Option) {
       .Case("unroll", Str)
       .Default("");
 }
+
+bool Parser::HandlePragmaQuality(QualityHint &Hint) {
+  assert(Tok.is(tok::annot_pragma_quality));
+  PragmaQualityInfo *Info =
+      static_cast<PragmaQualityInfo *>(Tok.getAnnotationValue());
+
+  IdentifierInfo *PragmaNameInfo = Info->PragmaName.getIdentifierInfo();
+  Hint.PragmaNameLoc = IdentifierLoc::create(
+      Actions.Context, Info->PragmaName.getLocation(), PragmaNameInfo);
+
+  IdentifierInfo *OptionInfo = Info->Option.getIdentifierInfo();
+  Hint.OptionLoc = IdentifierLoc::create(
+      Actions.Context, Info->Option.getLocation(), OptionInfo);
+
+  bool OptionMain = OptionInfo->isStr("main");
+  bool OptionFunct = OptionInfo->isStr("funct");
+
+  llvm::ArrayRef<Token> Toks = Info->Toks;
+  PP.EnterTokenStream(Toks, /*DisableMacroExpansion=*/false, false);
+  ConsumeAnnotationToken();
+
+  if (OptionFunct) {
+    Hint.ValueExprF = ParseConstantExpression().get();
+    Hint.ValueExpr = ParseConstantExpression().get();
+  } else if (OptionMain) {
+    Hint.ValueExpr = ParseConstantExpression().get();
+  } else {
+    printf("Neither main or funct as option parameters\n");
+  }
+    // Tokens following an error in an ill-formed constant expression will
+    // remain in the token stream and must be removed.
+  if (Tok.isNot(tok::eof)) {
+    printf("Not EOF\n");
+    while (Tok.isNot(tok::eof))
+      ConsumeAnyToken();
+  }
+  ConsumeToken(); // Consume the constant expression eof terminator.
+  Hint.Range = SourceRange(Info->PragmaName.getLocation(),
+                           Info->Toks.back().getLocation());
+  return true;
+}
+
 
 bool Parser::HandlePragmaLoopHint(LoopHint &Hint) {
   assert(Tok.is(tok::annot_pragma_loop_hint));
@@ -2648,6 +2720,10 @@ void PragmaOptimizeHandler::HandlePragma(Preprocessor &PP,
   Actions.ActOnPragmaOptimize(IsOn, FirstToken.getLocation());
 }
 
+
+
+
+
 namespace {
 /// Used as the annotation value for tok::annot_pragma_fp.
 struct TokFPAnnotValue {
@@ -2768,6 +2844,79 @@ void Parser::HandlePragmaFP() {
 
   Actions.ActOnPragmaFPContract(FPC);
   ConsumeAnnotationToken();
+}
+
+
+static bool ParseQualityValue(Preprocessor &PP, Token &Tok, Token PragmaName,
+                               Token Option, PragmaQualityInfo &Info) {
+  SmallVector<Token, 1> ValueList;
+  llvm::errs() << "ParseQualityValue\n";
+
+  while (Tok.isNot(tok::eod)) {
+    ValueList.push_back(Tok);
+    PP.Lex(Tok);
+  }
+  Token EOFTok;
+  EOFTok.startToken();
+  EOFTok.setKind(tok::eof);
+  EOFTok.setLocation(Tok.getLocation());
+  ValueList.push_back(EOFTok); // Terminates expression for parsing.
+
+  Info.Toks = llvm::makeArrayRef(ValueList).copy(PP.getPreprocessorAllocator());
+  Info.Option = Option;
+  Info.PragmaName = PragmaName;
+  return true;
+}
+
+
+void PragmaQualityHandler::HandlePragma(Preprocessor &PP,PragmaIntroducer Introducer, Token &Tok) {
+               
+  Token PragmaName = Tok;
+  SmallVector<Token, 1> TokenList;
+  PP.Lex(Tok);
+  if (Tok.isNot(tok::identifier)) {
+    printf("Error, not a identifier token for the option ofpragma quality\n");
+    return;
+  }
+
+  Token Option = Tok;
+  IdentifierInfo *OptionInfo = Tok.getIdentifierInfo();
+  bool OptionValid = llvm::StringSwitch<bool>(OptionInfo->getName())
+                           .Case("main", true)
+                           .Case("funct", true)
+                           .Default(false);
+  if (!OptionValid) {
+    printf("Error, option not recognized for pragma quality\n");
+    return;
+  }
+  PP.Lex(Tok);
+
+  PragmaQualityInfo *Info = new (PP.getPreprocessorAllocator()) PragmaQualityInfo;
+  
+  if (!ParseQualityValue(PP, Tok, PragmaName, Option, *Info))
+    return;
+
+
+
+
+  Token QualityTok;
+  QualityTok.startToken();
+  QualityTok.setKind(tok::annot_pragma_quality);
+  QualityTok.setLocation(PragmaName.getLocation());
+  QualityTok.setAnnotationEndLoc(PragmaName.getLocation());
+  QualityTok.setAnnotationValue(static_cast<void *>(Info));
+  TokenList.push_back(QualityTok);
+
+  if (Tok.isNot(tok::eod)) {
+    printf("Error, extra tokens at the end of pragma quality\n");
+    PP.Diag(Tok.getLocation(), diag::warn_pragma_extra_tokens_at_eol)
+        << "quality pragma";
+    return;
+  }
+  auto TokenArray = std::make_unique<Token[]>(TokenList.size());
+  std::copy(TokenList.begin(), TokenList.end(), TokenArray.get());
+  PP.EnterTokenStream(std::move(TokenArray), TokenList.size(), false, false);
+  
 }
 
 /// Parses loop or unroll pragma hint value and fills in Info.

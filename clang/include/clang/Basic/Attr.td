@@ -3164,6 +3164,28 @@ def LoopHint : Attr {
   let Documentation = [LoopHintDocs, UnrollHintDocs];
 }
 
+def Quality : Attr {
+  let Spellings = [Pragma<"", "quality">];
+  let Args = [EnumArgument<"Option", "OptionType",
+                          ["main", "funct"],
+                          ["Main", "Funct"]>,
+              ExprArgument<"ValueF">, ExprArgument<"Value">];
+  let AdditionalMembers = [{
+  static const char *getOptionName(int Option) {
+    switch(Option) {
+    case Main: return "main";
+    case Funct: return "funct";
+    }
+    llvm_unreachable("Unhandled Quality option.");
+  }
+    void printPrettyPragma(raw_ostream &OS, const PrintingPolicy &Policy) const {
+      return;
+    }
+  }];
+  let Documentation = [QualityDocs];
+}
+
+
 def CapturedRecord : InheritableAttr {
   // This attribute has no spellings as it is only ever created implicitly.
   let Spellings = [];

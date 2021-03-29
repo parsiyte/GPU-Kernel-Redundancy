@@ -27,6 +27,8 @@
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include "clang/Sema/QualityHint.h"
+
 #include <memory>
 #include <stack>
 
@@ -191,6 +193,8 @@ class Parser : public CodeCompletionHandler {
   std::unique_ptr<PragmaHandler> MSOptimize;
   std::unique_ptr<PragmaHandler> CUDAForceHostDeviceHandler;
   std::unique_ptr<PragmaHandler> OptimizeHandler;
+  std::unique_ptr<PragmaHandler> QualityHandler;
+
   std::unique_ptr<PragmaHandler> LoopHintHandler;
   std::unique_ptr<PragmaHandler> UnrollHintHandler;
   std::unique_ptr<PragmaHandler> NoUnrollHintHandler;
@@ -730,6 +734,8 @@ private:
   /// Handle the annotation token produced for
   /// #pragma clang __debug captured
   StmtResult HandlePragmaCaptured();
+
+  bool HandlePragmaQuality(QualityHint &Hint);
 
   /// Handle the annotation token produced for
   /// #pragma clang loop and #pragma unroll.
@@ -2035,6 +2041,12 @@ private:
                                  ParsedStmtContext StmtCtx,
                                  SourceLocation *TrailingElseLoc,
                                  ParsedAttributesWithRange &Attrs);
+
+ StmtResult ParsePragmaQuality(StmtVector &Stmts,
+                                  ParsedStmtContext StmtCtx,
+                                  SourceLocation *TrailingElseLoc,
+                                  ParsedAttributesWithRange &Attrs);
+
 
   /// Describes the behavior that should be taken for an __if_exists
   /// block.
