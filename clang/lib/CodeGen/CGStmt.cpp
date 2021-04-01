@@ -20,7 +20,6 @@
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
@@ -2477,39 +2476,34 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
     const Attr *t = QualityAttrs[0];
     const QualityAttr *attr = (const QualityAttr*)t;
     ASTContext& AC = CGM.getContext();
-    BasicBlock::iterator it_start = block->getPrevNode()->getFirstInsertionPt();
+    BasicBlock::iterator it_start = block->getFirstInsertionPt();
     Instruction *inst_start = &*it_start;
     Instruction *inst_final = inst_start;
-    errs() << *block->getPrevNode() << "\n";
-    errs() << *inst_start << "\n";
-    errs() << *inst_final << "\n";
-
-     std::string metadata_string;
+    std::string metadata_string;
     if (attr->getOption() == QualityAttr::Funct) {
         metadata_string = "Quality Funct ";
         int run = 1;
         std::string str, strF = "";
         clang::Expr *ValueExprF = attr->getValueF();
-        errs() << &*ValueExprF << "\n";
         clang::Expr::EvalResult EvalResult;
         if (ValueExprF) {
-      errs() << "YOLOOOO\n";
           bool e = ValueExprF->EvaluateAsLValue(EvalResult, AC);
           if (e) {
-      errs() << "YOLOOOO1\n";
             strF = EvalResult.Val.getAsString(AC, ValueExprF->getType());
             // String comes like &foo1, cut the '&'
             strF = strF.substr(1,std::string::npos);
           }
         }
         while (run) {
-          errs() << *inst_final << "\n";  
           if (inst_start != nullptr) {
             if (isa<CallInst>(inst_start)) {
+              str = cast<CallInst>(inst_start)->getCalledFunction()->getName();
+              if (strF == str)
+              {
                 inst_final = inst_start;
                 run = 0;
                 break;
-              
+              }
             }
             inst_start = inst_start->getNextNode();
             if (inst_start != nullptr) inst_final = inst_start;
@@ -2532,7 +2526,5 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
     std::string result = metadata_string + s;
     MDNode* N = MDNode::get(C, MDString::get(C, result));
     inst_final->setMetadata("quality", N);
-    errs() << *inst_final << "\n";
-    
   }
 }

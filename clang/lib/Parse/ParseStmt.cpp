@@ -167,6 +167,7 @@ Retry:
   tok::TokenKind Kind  = Tok.getKind();
   SourceLocation AtLoc;
   
+    llvm::errs() << "PARSESTMT\n" ;
   switch (Kind) {
   case tok::at: // May be a @try or @throw statement
     {
