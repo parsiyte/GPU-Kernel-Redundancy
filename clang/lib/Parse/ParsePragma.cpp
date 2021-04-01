@@ -2850,7 +2850,6 @@ void Parser::HandlePragmaFP() {
 static bool ParseQualityValue(Preprocessor &PP, Token &Tok, Token PragmaName,
                                Token Option, PragmaQualityInfo &Info) {
   SmallVector<Token, 1> ValueList;
-  llvm::errs() << "ParseQualityValue\n";
 
   while (Tok.isNot(tok::eod)) {
     ValueList.push_back(Tok);

@@ -2476,7 +2476,7 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
     const Attr *t = QualityAttrs[0];
     const QualityAttr *attr = (const QualityAttr*)t;
     ASTContext& AC = CGM.getContext();
-    BasicBlock::iterator it_start = block->getFirstInsertionPt();
+    BasicBlock::iterator it_start = block->getPrevNode()->getFirstInsertionPt();
     Instruction *inst_start = &*it_start;
     Instruction *inst_final = inst_start;
     std::string metadata_string;
@@ -2497,13 +2497,9 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
         while (run) {
           if (inst_start != nullptr) {
             if (isa<CallInst>(inst_start)) {
-              str = cast<CallInst>(inst_start)->getCalledFunction()->getName();
-              if (strF == str)
-              {
                 inst_final = inst_start;
                 run = 0;
                 break;
-              }
             }
             inst_start = inst_start->getNextNode();
             if (inst_start != nullptr) inst_final = inst_start;

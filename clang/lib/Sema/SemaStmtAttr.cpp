@@ -322,7 +322,6 @@ static Attr *handleOpenCLUnrollHint(Sema &S, Stmt *St, const ParsedAttr &A,
 
 
 static Attr *handleQualityAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceRange Range) {
-  llvm::errs() << "handleQualityAttr\n";
   IdentifierLoc *PragmaNameLoc = A.getArgAsIdent(0);
   IdentifierLoc *OptionLoc = A.getArgAsIdent(1);
   Expr *ValueExpr = nullptr;
@@ -348,8 +347,7 @@ static Attr *handleQualityAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceRan
 
 
 static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
-                                  SourceRange Range) {
-                                  llvm::errs() << "ProcessStmtAttribute -> " << A.getKind() << "\n";
+                                  SourceRange Range) {;
   switch (A.getKind()) {
   case ParsedAttr::UnknownAttribute:
     S.Diag(A.getLoc(), A.isDeclspecAttribute()
