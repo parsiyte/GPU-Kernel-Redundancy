@@ -2525,6 +2525,5 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
     std::string s = std::to_string(ValueInt);
     std::string result = metadata_string + s;
     MDNode* N = MDNode::get(C, MDString::get(C, result));
-    inst_final->setMetadata("quality", N);
   }
 }
