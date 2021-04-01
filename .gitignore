@@ -45,7 +45,6 @@ autoconf/autom4te.cache
 /CMakeSettings.json
 # CLion project configuration
 /.idea
-/.cache
 
 #==============================================================================#
 # Directories to ignore (do not add trailing '/'s, they skip symlinks).
