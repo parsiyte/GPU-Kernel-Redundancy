@@ -2481,7 +2481,7 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
     Instruction *inst_final = inst_start;
     std::string metadata_string;
     if (attr->getOption() == QualityAttr::Funct) {
-        metadata_string = "Quality Funct ";
+        metadata_string = "Redundant Funct ";
         int run = 1;
         std::string str, strF = "";
         clang::Expr *ValueExprF = attr->getValueF();
@@ -2509,7 +2509,7 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
           }
         }
     } else if (attr->getOption() == QualityAttr::Main) {
-        metadata_string = "Quality Main ";
+        metadata_string = "redundant Main ";
     }
     LLVMContext& C = inst_final->getContext();
     unsigned ValueInt = 0;
@@ -2521,6 +2521,6 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
     std::string s = std::to_string(ValueInt);
     std::string result = metadata_string + s;
     MDNode* N = MDNode::get(C, MDString::get(C, result));
-    inst_final->setMetadata("quality", N);
+    inst_final->setMetadata("redundant", N);
   }
 }

@@ -3165,7 +3165,7 @@ def LoopHint : Attr {
 }
 
 def Quality : Attr {
-  let Spellings = [Pragma<"", "quality">];
+  let Spellings = [Pragma<"", "redundant">];
   let Args = [EnumArgument<"Option", "OptionType",
                           ["main", "funct"],
                           ["Main", "Funct"]>,

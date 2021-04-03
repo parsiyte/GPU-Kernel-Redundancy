@@ -2888,9 +2888,9 @@ for details.
 
 def QualityDocs : Documentation {
   let Category = DocCatStmt;
-  let Heading = "#pragma quality";
+  let Heading = "#pragma redundant";
   let Content = [{
-The ``#pragma quality`` directive allows add metadata in the IR to specific functions or to the general program.
+The ``#pragma redundant`` directive allows add metadata in the IR to specific functions or to the general program.
   }];
 }
 

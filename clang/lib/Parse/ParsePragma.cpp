@@ -219,7 +219,7 @@ private:
 
 
 struct PragmaQualityHandler : public PragmaHandler {
-  PragmaQualityHandler() : PragmaHandler("quality") {}
+  PragmaQualityHandler() : PragmaHandler("redundant") {}
   void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
                     Token &FirstToken) override;
 };
