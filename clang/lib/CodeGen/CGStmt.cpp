@@ -14,11 +14,15 @@
 #include "CodeGenFunction.h"
 #include "CodeGenModule.h"
 #include "TargetInfo.h"
+#include "clang/AST/APValue.h"
 #include "clang/AST/Attr.h"
+#include "clang/AST/Attrs.inc"
 #include "clang/AST/StmtVisitor.h"
+#include "clang/AST/Type.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Basic/TargetInfo.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/InlineAsm.h"
@@ -28,6 +32,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <iostream>
 #include "clang/Sema/QualityHint.h"
+#include "llvm/IR/Type.h"
 
 using namespace clang;
 using namespace CodeGen;
@@ -2473,27 +2478,28 @@ CodeGenFunction::GenerateCapturedStmtFunction(const CapturedStmt &S) {
 void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const Attr *> QualityAttrs) {
   using namespace llvm;
   if (QualityAttrs[0]->getKind() == attr::Quality) {
+    
+    errs() << "addQualityMetadata\n";
     const Attr *t = QualityAttrs[0];
     const QualityAttr *attr = (const QualityAttr*)t;
     ASTContext& AC = CGM.getContext();
     BasicBlock::iterator it_start = block->getPrevNode()->getFirstInsertionPt();
-    Instruction *inst_start = &*it_start;
+    Instruction *inst_start = &*it_start; 
     Instruction *inst_final = inst_start;
-    std::string metadata_string;
-    if (attr->getOption() == QualityAttr::Funct) {
-        metadata_string = "Redundant Funct ";
+    std::string MetaData = "Inputs ";
+    if (attr->getOption() == QualityAttr::In) {
         int run = 1;
-        std::string str, strF = "";
-        clang::Expr *ValueExprF = attr->getValueF();
+        clang::Expr *Outputs = attr->getOutputs();
+        clang::Expr *Inputs = attr->getInputs();
         clang::Expr::EvalResult EvalResult;
-        if (ValueExprF) {
-          bool e = ValueExprF->EvaluateAsLValue(EvalResult, AC);
-          if (e) {
-            strF = EvalResult.Val.getAsString(AC, ValueExprF->getType());
-            // String comes like &foo1, cut the '&'
-            strF = strF.substr(1,std::string::npos);
-          }
-        }
+        Inputs->EvaluateAsRValue(EvalResult, AC);
+        Inputs->EvaluateAsFixedPoint(EvalResult, AC) ;
+        MetaData += EvalResult.Val.getAsString(AC, Inputs->getType());
+        MetaData += " Outputs ";
+        Outputs->EvaluateAsRValue(EvalResult, AC);
+        Outputs->EvaluateAsFixedPoint(EvalResult, AC) ;
+        MetaData += EvalResult.Val.getAsString(AC, Outputs->getType());
+        
         while (run) {
           if (inst_start != nullptr) {
             if (isa<CallInst>(inst_start)) {
@@ -2501,26 +2507,19 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
                 run = 0;
                 break;
             }
-            inst_start = inst_start->getNextNode();
+            inst_start = inst_start->getNextNode(); 
             if (inst_start != nullptr) inst_final = inst_start;
           } else {
           run = 0;
           break;
           }
         }
-    } else if (attr->getOption() == QualityAttr::Main) {
-        metadata_string = "redundant Main ";
     }
+    
     LLVMContext& C = inst_final->getContext();
-    unsigned ValueInt = 0;
-    auto *ValueExpr = attr->getValue();
-    if (ValueExpr) {
-        llvm::APSInt ValueAPS = ValueExpr->EvaluateKnownConstInt(AC);
-        ValueInt = ValueAPS.getSExtValue();
-    }
-    std::string s = std::to_string(ValueInt);
-    std::string result = metadata_string + s;
-    MDNode* N = MDNode::get(C, MDString::get(C, result));
-    inst_final->setMetadata("redundant", N);
-  }
+    MDNode* N = MDNode::get(C, MDString::get(C, MetaData));
+    inst_final->setMetadata("Redundancy", N);
+
+  } 
 }
+

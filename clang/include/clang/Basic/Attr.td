@@ -3167,14 +3167,14 @@ def LoopHint : Attr {
 def Quality : Attr {
   let Spellings = [Pragma<"", "redundant">];
   let Args = [EnumArgument<"Option", "OptionType",
-                          ["main", "funct"],
-                          ["Main", "Funct"]>,
-              ExprArgument<"ValueF">, ExprArgument<"Value">];
+                          ["main", "in"],
+                          ["Main", "In"]>,
+              ExprArgument<"Inputs">, StringArgument<"Out">, ExprArgument<"Outputs">];
   let AdditionalMembers = [{
   static const char *getOptionName(int Option) {
     switch(Option) {
     case Main: return "main";
-    case Funct: return "funct";
+    case In: return "in";
     }
     llvm_unreachable("Unhandled Quality option.");
   }

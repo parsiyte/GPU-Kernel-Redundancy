@@ -11,6 +11,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+//#include "clang/AST/Attrs.inc"
+#include "clang/Sema/Ownership.h"
+#include "clang/AST/Expr.h"
 #include "clang/AST/PrettyDeclStackTrace.h"
 #include "clang/Basic/Attributes.h"
 #include "clang/Basic/PrettyStackTrace.h"
@@ -18,6 +21,8 @@
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/DeclSpec.h"
+#include "clang/Sema/Ownership.h"
+#include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/TypoCorrection.h"
 #include "clang/Sema/QualityHint.h"
@@ -96,8 +101,7 @@ StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc,
 /// [OBC]   '@' 'throw' expression ';'
 /// [OBC]   '@' 'throw' ';'
 ///
-StmtResult
-Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
+StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
                                     ParsedStmtContext StmtCtx,
                                     SourceLocation *TrailingElseLoc) {
 
@@ -2171,22 +2175,21 @@ StmtResult Parser::ParsePragmaQuality(StmtVector &Stmts,
                                        ParsedStmtContext Allowed,
                                        SourceLocation *TrailingElseLoc,
                                        ParsedAttributesWithRange &Attrs) {
-  // Create temporary attribute list.
-  ParsedAttributesWithRange TempAttrs(AttrFactory);
+ParsedAttributesWithRange TempAttrs(AttrFactory);
   while (Tok.is(tok::annot_pragma_quality)) {
+    llvm::errs() << "ParsePragmaQuality\n";
     QualityHint Hint;
     if (!HandlePragmaQuality(Hint))
       continue;
-    if (Hint.OptionLoc->Ident->getName() == "funct") {
+    if (Hint.OptionLoc->Ident->getName() == "in") {
       ArgsUnion ArgHints[] = {Hint.PragmaNameLoc, Hint.OptionLoc,
-                            ArgsUnion(Hint.ValueExprF), ArgsUnion(Hint.ValueExpr)};
+                            Hint.Inputs, Hint.Outputs};
       TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
-                     Hint.PragmaNameLoc->Loc, ArgHints, 4,
-                    AsmLabelAttr::AS_Pragma);
+                     Hint.PragmaNameLoc->Loc, ArgHints, 5,
+                     AsmLabelAttr::AS_Pragma);
     } else if (Hint.OptionLoc->Ident->getName() == "main") {
       // Hint.ValueExprF is NOT needed in this case
-      ArgsUnion ArgHints[] = {Hint.PragmaNameLoc, Hint.OptionLoc,
-                            ArgsUnion(Hint.ValueExpr)};
+      ArgsUnion ArgHints[] = {Hint.PragmaNameLoc, Hint.OptionLoc};
       TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
                      Hint.PragmaNameLoc->Loc, ArgHints, 3,
                      AsmLabelAttr::AS_Pragma);
@@ -2200,6 +2203,7 @@ StmtResult Parser::ParsePragmaQuality(StmtVector &Stmts,
       Stmts, Allowed, TrailingElseLoc, Attrs);
   Attrs.takeAllFrom(TempAttrs);
   return S;
+
 }
 
 

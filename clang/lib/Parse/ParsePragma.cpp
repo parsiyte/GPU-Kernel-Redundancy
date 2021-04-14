@@ -11,18 +11,23 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/Expr.h"
 #include "clang/Basic/PragmaKinds.h"
 #include "clang/Basic/TargetInfo.h"
+#include "clang/Basic/TokenKinds.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Parse/LoopHint.h"
 #include "clang/Parse/ParseDiagnostic.h"
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/Scope.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 
 #include "clang/Sema/QualityHint.h"
+#include "llvm/Support/raw_ostream.h"
 #include <stdio.h>
+#include <string>
 using namespace clang;
 
 namespace {
@@ -1043,9 +1048,13 @@ static std::string PragmaLoopHintString(Token PragmaName, Token Option) {
       .Case("unroll_and_jam", Str)
       .Case("unroll", Str)
       .Default("");
+
 }
 
+
+
 bool Parser::HandlePragmaQuality(QualityHint &Hint) {
+  llvm::errs() << "HandlePragmaQuality\n";
   assert(Tok.is(tok::annot_pragma_quality));
   PragmaQualityInfo *Info =
       static_cast<PragmaQualityInfo *>(Tok.getAnnotationValue());
@@ -1059,32 +1068,53 @@ bool Parser::HandlePragmaQuality(QualityHint &Hint) {
       Actions.Context, Info->Option.getLocation(), OptionInfo);
 
   bool OptionMain = OptionInfo->isStr("main");
-  bool OptionFunct = OptionInfo->isStr("funct");
+  bool OptionFunct = OptionInfo->isStr("in");
 
   llvm::ArrayRef<Token> Toks = Info->Toks;
   PP.EnterTokenStream(Toks, /*DisableMacroExpansion=*/false, false);
   ConsumeAnnotationToken();
+  std::string Inputs = "";
+  std::string Outputs = "";
+  /*
+  llvm::errs() << Toks.size()-1 << "\n";
+  for(int i = 0; i < Toks.size()-1; i++){
+    Token CurrentToken = Toks[i];
 
-  if (OptionFunct) {
-    Hint.ValueExprF = ParseConstantExpression().get();
-    Hint.ValueExpr = ParseConstantExpression().get();
-  } else if (OptionMain) {
-    Hint.ValueExpr = ParseConstantExpression().get();
-  } else {
-    printf("Neither main or funct as option parameters\n");
-  }
+    ConsumeToken();
+    if(CurrentToken.getKind() == tok::comma)
+      continue;
+    std::string Value = CurrentToken.getIdentifierInfo()->getName();
+    llvm::errs() << i << " " << Value << "-\n";
+    if(Value == "out"){
+      OptionFunct = false;
+    }
+    if(OptionFunct){
+      Inputs += Value;
+      }
+    else{
+      Outputs += Value;
+    }
+
+  }*/
+  //Hint.Inputs = StringRef(Inputs);
+  Hint.Inputs = ParseConstantExpression().get();
+  ConsumeAnyToken();
+  
+  Hint.Outputs = ParseConstantExpression().get();
     // Tokens following an error in an ill-formed constant expression will
     // remain in the token stream and must be removed.
   if (Tok.isNot(tok::eof)) {
     printf("Not EOF\n");
+    llvm::errs() << Tok.getIdentifierInfo()->getName();
     while (Tok.isNot(tok::eof))
       ConsumeAnyToken();
   }
   ConsumeToken(); // Consume the constant expression eof terminator.
-  Hint.Range = SourceRange(Info->PragmaName.getLocation(),
+    Hint.Range = SourceRange(Info->PragmaName.getLocation(),
                            Info->Toks.back().getLocation());
   return true;
 }
+
 
 
 bool Parser::HandlePragmaLoopHint(LoopHint &Hint) {
@@ -2846,9 +2876,8 @@ void Parser::HandlePragmaFP() {
   ConsumeAnnotationToken();
 }
 
-
 static bool ParseQualityValue(Preprocessor &PP, Token &Tok, Token PragmaName,
-                               Token Option, PragmaQualityInfo &Info) {
+                    Token Option, PragmaQualityInfo &Info) {
   SmallVector<Token, 1> ValueList;
 
   while (Tok.isNot(tok::eod)) {
@@ -2864,25 +2893,31 @@ static bool ParseQualityValue(Preprocessor &PP, Token &Tok, Token PragmaName,
   Info.Toks = llvm::makeArrayRef(ValueList).copy(PP.getPreprocessorAllocator());
   Info.Option = Option;
   Info.PragmaName = PragmaName;
+  llvm::errs() << "ParseQualityValue\n";
   return true;
+
 }
 
 
-void PragmaQualityHandler::HandlePragma(Preprocessor &PP,PragmaIntroducer Introducer, Token &Tok) {
-               
+
+void PragmaQualityHandler::HandlePragma(Preprocessor &PP,
+                                         PragmaIntroducer Introducer,
+                                         Token &Tok) {
   Token PragmaName = Tok;
+  llvm::errs() << Tok.getIdentifierInfo()->getName() << "1\n";
   SmallVector<Token, 1> TokenList;
   PP.Lex(Tok);
   if (Tok.isNot(tok::identifier)) {
     printf("Error, not a identifier token for the option ofpragma quality\n");
     return;
   }
+  llvm::errs() << Tok.getIdentifierInfo()->getName() << "2\n";
 
   Token Option = Tok;
   IdentifierInfo *OptionInfo = Tok.getIdentifierInfo();
   bool OptionValid = llvm::StringSwitch<bool>(OptionInfo->getName())
                            .Case("main", true)
-                           .Case("funct", true)
+                           .Case("in", true)
                            .Default(false);
   if (!OptionValid) {
     printf("Error, option not recognized for pragma quality\n");
@@ -2890,13 +2925,10 @@ void PragmaQualityHandler::HandlePragma(Preprocessor &PP,PragmaIntroducer Introd
   }
   PP.Lex(Tok);
 
-  PragmaQualityInfo *Info = new (PP.getPreprocessorAllocator()) PragmaQualityInfo;
-  
+  llvm::errs() << Tok.getIdentifierInfo()->getName() << "3\n";
+  auto *Info = new (PP.getPreprocessorAllocator()) PragmaQualityInfo;
   if (!ParseQualityValue(PP, Tok, PragmaName, Option, *Info))
     return;
-
-
-
 
   Token QualityTok;
   QualityTok.startToken();
@@ -2904,6 +2936,7 @@ void PragmaQualityHandler::HandlePragma(Preprocessor &PP,PragmaIntroducer Introd
   QualityTok.setLocation(PragmaName.getLocation());
   QualityTok.setAnnotationEndLoc(PragmaName.getLocation());
   QualityTok.setAnnotationValue(static_cast<void *>(Info));
+  llvm::errs() << QualityTok.getKind() << "4\n";
   TokenList.push_back(QualityTok);
 
   if (Tok.isNot(tok::eod)) {
@@ -2914,9 +2947,10 @@ void PragmaQualityHandler::HandlePragma(Preprocessor &PP,PragmaIntroducer Introd
   }
   auto TokenArray = std::make_unique<Token[]>(TokenList.size());
   std::copy(TokenList.begin(), TokenList.end(), TokenArray.get());
-  PP.EnterTokenStream(std::move(TokenArray), TokenList.size(), false, false);
-  
-}
+  PP.EnterTokenStream(std::move(TokenArray), TokenList.size(),
+                      /*DisableMacroExpansion=*/false, false);
+
+} 
 
 /// Parses loop or unroll pragma hint value and fills in Info.
 static bool ParseLoopHintValue(Preprocessor &PP, Token &Tok, Token PragmaName,
