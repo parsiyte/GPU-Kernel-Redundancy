@@ -2183,9 +2183,11 @@ ParsedAttributesWithRange TempAttrs(AttrFactory);
       continue;
     if (Hint.OptionLoc->Ident->getName() == "in") {
       ArgsUnion ArgHints[] = {Hint.PragmaNameLoc, Hint.OptionLoc,
-                            Hint.Inputs, Hint.Outputs};
+                            Hint.Inputs, Hint.Inputs2, Hint.Inputs3, Hint.Inputs4, Hint.Inputs5, 
+                            Hint.Outputs, Hint.Outputs2, Hint.Outputs3, Hint.Outputs4, Hint.Outputs5, 
+                            };
       TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
-                     Hint.PragmaNameLoc->Loc, ArgHints, 5,
+                     Hint.PragmaNameLoc->Loc, ArgHints, 15,
                      AsmLabelAttr::AS_Pragma);
     } else if (Hint.OptionLoc->Ident->getName() == "main") {
       // Hint.ValueExprF is NOT needed in this case

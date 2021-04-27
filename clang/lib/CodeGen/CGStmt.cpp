@@ -2489,17 +2489,87 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
     std::string MetaData = "Inputs ";
     if (attr->getOption() == QualityAttr::In) {
         int run = 1;
-        clang::Expr *Outputs = attr->getOutputs();
         clang::Expr *Inputs = attr->getInputs();
+        clang::Expr *Input2 = attr->getInputs2();
+        clang::Expr *Input3 = attr->getInputs3();
+        clang::Expr *Input4 = attr->getInputs4();
+        clang::Expr *Input5 = attr->getInputs5();
+
+        clang::Expr *Output = attr->getOutputs();
+        clang::Expr *Output2 = attr->getOutputs2();
+        clang::Expr *Output3 = attr->getOutputs3();
+        clang::Expr *Output4 = attr->getOutputs4();
+        clang::Expr *Output5 = attr->getOutputs5();
         clang::Expr::EvalResult EvalResult;
-        Inputs->EvaluateAsRValue(EvalResult, AC);
-        Inputs->EvaluateAsFixedPoint(EvalResult, AC) ;
+        if(Inputs != nullptr){
+          Inputs->EvaluateAsRValue(EvalResult, AC);
+          Inputs->EvaluateAsFixedPoint(EvalResult, AC) ;
+          MetaData += EvalResult.Val.getAsString(AC, Inputs->getType());
+          errs() << MetaData << "\n";
+          if(Input2 != nullptr){
+          Input2->EvaluateAsRValue(EvalResult, AC);
+          Input2->EvaluateAsFixedPoint(EvalResult, AC) ;
+          MetaData += EvalResult.Val.getAsString(AC, Input2->getType());
+          errs() << MetaData << "\n";
+            if(Input3 != nullptr){
+            Input3->EvaluateAsRValue(EvalResult, AC);
+            Input3->EvaluateAsFixedPoint(EvalResult, AC) ;
+            MetaData += EvalResult.Val.getAsString(AC, Input3->getType());
+            errs() << MetaData << "\n";
+                if(Input4 != nullptr){
+                Input4->EvaluateAsRValue(EvalResult, AC);
+                Input4->EvaluateAsFixedPoint(EvalResult, AC) ;
+                MetaData += EvalResult.Val.getAsString(AC, Input4->getType());
+                errs() << MetaData << "\n";
+                  if(Input5 != nullptr){
+                    Input5->EvaluateAsRValue(EvalResult, AC);
+                    Input5->EvaluateAsFixedPoint(EvalResult, AC) ;
+                    MetaData += EvalResult.Val.getAsString(AC, Input5->getType());
+                    errs() << MetaData << "\n";
+                  }
+              }
+            }
+          }
+        }
+        MetaData += " Outputs ";
+        if(Output != nullptr){
+          Output->EvaluateAsRValue(EvalResult, AC);
+          Output->EvaluateAsFixedPoint(EvalResult, AC) ;
+          MetaData += EvalResult.Val.getAsString(AC, Output->getType());
+          errs() << MetaData << "\n";
+          if(Output2 != nullptr){
+          Output2->EvaluateAsRValue(EvalResult, AC);
+          Output2->EvaluateAsFixedPoint(EvalResult, AC) ;
+          MetaData += EvalResult.Val.getAsString(AC, Output2->getType());
+          errs() << MetaData << "\n";
+            if(Output3 != nullptr){
+            Output3->EvaluateAsRValue(EvalResult, AC);
+            Output3->EvaluateAsFixedPoint(EvalResult, AC) ;
+            MetaData += EvalResult.Val.getAsString(AC, Output3->getType());
+            errs() << MetaData << "\n";
+                if(Output4 != nullptr){
+                Output4->EvaluateAsRValue(EvalResult, AC);
+                Output4->EvaluateAsFixedPoint(EvalResult, AC) ;
+                MetaData += EvalResult.Val.getAsString(AC, Output4->getType());
+                errs() << MetaData << "\n";
+                  if(Output5 != nullptr){
+                    Output5->EvaluateAsRValue(EvalResult, AC);
+                    Output5->EvaluateAsFixedPoint(EvalResult, AC) ;
+                    MetaData += EvalResult.Val.getAsString(AC, Output5->getType());
+                    errs() << MetaData << "\n";
+                  }
+              }
+            }
+          }
+        }
+        /*
         MetaData += EvalResult.Val.getAsString(AC, Inputs->getType());
+        MetaData += EvalResult.Val.getAsString(AC, Input2->getType());
         MetaData += " Outputs ";
         Outputs->EvaluateAsRValue(EvalResult, AC);
         Outputs->EvaluateAsFixedPoint(EvalResult, AC) ;
         MetaData += EvalResult.Val.getAsString(AC, Outputs->getType());
-        
+        */
         while (run) {
           if (inst_start != nullptr) {
             if (isa<CallInst>(inst_start)) {

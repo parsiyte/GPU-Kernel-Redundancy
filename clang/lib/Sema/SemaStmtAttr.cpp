@@ -336,10 +336,6 @@ static Attr *handleQualityAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceRan
   bool PragmaFunct = OptionLoc->Ident->getName() == "in";
     
   QualityAttr::OptionType Option = QualityAttr::In;
-  llvm::errs() << A.isArgExpr(2) << "\n";
-  llvm::errs() << A.isArgIdent(2) << "\n";
-  llvm::errs() << A.isArgExpr(3) << "\n";
-  llvm::errs() << A.isArgIdent(3) << "\n";
   /*
   StringRef a = "4";
   QualityAttr::OptionType Option;
@@ -360,7 +356,11 @@ static Attr *handleQualityAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceRan
 */
   //return QualityAttr::CreateImplicit(S.Context, Option, ValueExprF, ValueExpr, A.getRange());
   //return QualityAttr::CreateImplicit(S.Context, Option, ValueExprF, ValueExpr,SecOp, A.getRange());
-  return QualityAttr::CreateImplicit(S.Context,Option,A.getArgAsExpr(2),"ss", A.getArgAsExpr(3),A.getRange());
+  return QualityAttr::CreateImplicit(S.Context,Option,
+  A.getArgAsExpr(2), A.getArgAsExpr(3),A.getArgAsExpr(4),A.getArgAsExpr(5),A.getArgAsExpr(6),
+  "Out", 
+  A.getArgAsExpr(7),A.getArgAsExpr(8),A.getArgAsExpr(9),A.getArgAsExpr(10),A.getArgAsExpr(11),
+  A.getRange());
 }
 
 

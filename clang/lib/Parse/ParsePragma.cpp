@@ -1075,32 +1075,44 @@ bool Parser::HandlePragmaQuality(QualityHint &Hint) {
   ConsumeAnnotationToken();
   std::string Inputs = "";
   std::string Outputs = "";
-  /*
-  llvm::errs() << Toks.size()-1 << "\n";
-  for(int i = 0; i < Toks.size()-1; i++){
-    Token CurrentToken = Toks[i];
-
-    ConsumeToken();
-    if(CurrentToken.getKind() == tok::comma)
-      continue;
-    std::string Value = CurrentToken.getIdentifierInfo()->getName();
-    llvm::errs() << i << " " << Value << "-\n";
-    if(Value == "out"){
-      OptionFunct = false;
-    }
-    if(OptionFunct){
-      Inputs += Value;
-      }
-    else{
-      Outputs += Value;
-    }
-
-  }*/
-  //Hint.Inputs = StringRef(Inputs);
-  Hint.Inputs = ParseConstantExpression().get();
-  ConsumeAnyToken();
+  int Index = 0;
   
-  Hint.Outputs = ParseConstantExpression().get();
+  ConsumeAnyToken();
+  while(Tok.getIdentifierInfo()->getName() != "out"){
+    llvm::errs() << Tok.getIdentifierInfo()->getName() << "\n";
+    if(Index == 0)
+      Hint.Inputs = ParseConstantExpression().get();
+    else if(Index == 1)
+      Hint.Inputs2 = ParseConstantExpression().get();
+    else if(Index == 2)
+      Hint.Inputs3 = ParseConstantExpression().get();
+    else if(Index == 3)
+      Hint.Inputs4 = ParseConstantExpression().get();
+    else if(Index == 4)
+      Hint.Inputs5 = ParseConstantExpression().get();
+    Index++;
+  }
+  
+    llvm::errs() << Tok.getIdentifierInfo()->getName() << "o\n";
+  ConsumeAnyToken();
+    llvm::errs() << Tok.getIdentifierInfo()->getName() << "o\n";
+  Index = 0;
+  while (Tok.isNot(tok::eof)){
+    llvm::errs() << Tok.getIdentifierInfo()->getName() << "\n";
+    llvm::errs() << Index << "\n";
+    if(Index == 0)
+      Hint.Outputs = ParseConstantExpression().get();
+    else if(Index == 1)
+      Hint.Outputs2 = ParseConstantExpression().get();
+    else if(Index == 2)
+      Hint.Outputs3 = ParseConstantExpression().get();
+    else if(Index == 3)
+      Hint.Outputs4 = ParseConstantExpression().get();
+    else if(Index == 4)
+      Hint.Outputs5 = ParseConstantExpression().get();
+
+    Index++;
+  }
     // Tokens following an error in an ill-formed constant expression will
     // remain in the token stream and must be removed.
   if (Tok.isNot(tok::eof)) {
@@ -2923,9 +2935,10 @@ void PragmaQualityHandler::HandlePragma(Preprocessor &PP,
     printf("Error, option not recognized for pragma quality\n");
     return;
   }
-  PP.Lex(Tok);
-
-  llvm::errs() << Tok.getIdentifierInfo()->getName() << "3\n";
+  while( Tok.getIdentifierInfo()->getName() == "Out"){
+    PP.Lex(Tok);
+  }
+  
   auto *Info = new (PP.getPreprocessorAllocator()) PragmaQualityInfo;
   if (!ParseQualityValue(PP, Tok, PragmaName, Option, *Info))
     return;
@@ -2936,7 +2949,6 @@ void PragmaQualityHandler::HandlePragma(Preprocessor &PP,
   QualityTok.setLocation(PragmaName.getLocation());
   QualityTok.setAnnotationEndLoc(PragmaName.getLocation());
   QualityTok.setAnnotationValue(static_cast<void *>(Info));
-  llvm::errs() << QualityTok.getKind() << "4\n";
   TokenList.push_back(QualityTok);
 
   if (Tok.isNot(tok::eod)) {

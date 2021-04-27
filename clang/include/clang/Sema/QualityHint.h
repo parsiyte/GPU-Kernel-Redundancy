@@ -15,10 +15,20 @@ struct QualityHint {
   IdentifierLoc *PragmaNameLoc;
   IdentifierLoc *OptionLoc;
   Expr *Inputs;
+  Expr *Inputs2;
+  Expr *Inputs3;
+  Expr *Inputs4;
+  Expr *Inputs5;
   Expr *Outputs;
+  Expr *Outputs2;
+  Expr *Outputs3;
+  Expr *Outputs4;
+  Expr *Outputs5;
 
   QualityHint()
-      : PragmaNameLoc(nullptr), OptionLoc(nullptr), Inputs(nullptr), Outputs(nullptr) {}
+      : PragmaNameLoc(nullptr), OptionLoc(nullptr), 
+      Inputs(nullptr), Inputs2(nullptr), Inputs3(nullptr), Inputs4(nullptr), Inputs5(nullptr), 
+      Outputs(nullptr), Outputs2(nullptr), Outputs3(nullptr), Outputs4(nullptr), Outputs5(nullptr) {}
 };
 
 }
