@@ -61,6 +61,7 @@ struct Hello : public FunctionPass {
   CallInst *printf = nullptr;
 
   bool runOnFunction(Function &F) override {
+    /*
     bool print = false;
     errs() << "----------------\n";
     for (Function::iterator fi = F.begin(); fi != F.end(); ++fi) {
@@ -422,7 +423,7 @@ struct Hello : public FunctionPass {
         }
       }
     }
-    return false;
+    return false;*/
   }
 }; // end of struct Hello
 
@@ -710,14 +711,13 @@ struct Hello3 : public ModulePass {
                         CudaMallocSizes.push_back(FunctionCall->getArgOperand(1));
                     }
                     else if (CalledFunctionName == "_ZN4dim3C2Ejjj") {
-                        if (DimensionFunction%2 == 1 ) {
+                        if (DimensionFunction%2 == 1    ) {
                             GridOperand.push_back(FunctionCall->getArgOperand(1));
                             GridOperandY.push_back(FunctionCall->getArgOperand(2));
                         }
                         else {
                             ThreadOperand.push_back(FunctionCall->getArgOperand(1));
                             ThreadOperandY.push_back(FunctionCall->getArgOperand(2));
-                            errs() << "Thread : " << *FunctionCall << "\n";
                         }
                         DimensionFunction++;
                     }
@@ -727,7 +727,6 @@ struct Hello3 : public ModulePass {
 
                     }
                     else if(Iterator != FunctionsToReplicate.end()){
-
                         std::vector<Value *> ReplicatedParameters;
 
                         FunctionCallee ReplicatedFunction =  M.getFunction(CalledFunctionName);
@@ -743,6 +742,7 @@ struct Hello3 : public ModulePass {
                                 std::vector<Value*>::iterator IteratorMalloc =  std::find(CudaMallocsOperands.begin(),CudaMallocsOperands.end(), dyn_cast<Value>(User));
                                 if(IteratorMalloc != CudaMallocsOperands.end()){
                                     CountedIndex = IteratorMalloc - CudaMallocsOperands.begin();
+                                    errs() << CountedIndex << "\n";
                                     CudaMallocSize = CudaMallocSizes.at(CountedIndex);
                                 }
                             }
@@ -908,15 +908,11 @@ struct Hello3 : public ModulePass {
                         AllocaInst *GridCoercion = Builder.CreateAlloca(CoercionType);
                         AllocaInst *ThreadCoercion = Builder.CreateAlloca(CoercionType);
 
-                        Builder.CreateCall(DimentionFunction, {Grid, GridOperand.at(GridOperand.size() - 1), GridOperand.at(GridOperand.size() - 1), One32Bit});
-                        Builder.CreateCall(DimentionFunction, {Thread, ThreadOperand.at(ThreadOperand.size() - 1), ThreadOperandY.at(ThreadOperandY.size() - 1), One32Bit});
-                        /*
-                        errs() << *GridOperand.at(GridOperand.size() - 1) << "++**--\n";
+                        Builder.CreateCall(DimentionFunction, {Grid, GridOperand.at(GridOperand.size() - 1), GridOperandY.at(GridOperand.size() - 1), One32Bit});
+                        Builder.CreateCall(DimentionFunction, {Thread, ThreadOperand.at(ThreadOperand.size() - 1), ThreadOperandY.at(ThreadOperand.size() - 1), One32Bit});
 
-                        */
-                        errs() << "Thread için X: " << *ThreadOperand.at(ThreadOperand.size() - 1) << "\n";
-                        errs() << "Thread için Y: " << *ThreadOperandY.at(ThreadOperandY.size() - 1) << "\n";
-
+                            errs() << *ThreadOperand.at(ThreadOperand.size() - 1) << "++**--\n";
+                            errs() << *GridOperand.at(GridOperand.size() - 1) << "++**--\n";
 
                         Value *GridCoercionyBitCast = Builder.CreateBitCast(dyn_cast<Value>(GridCoercion), Int8PtrType);
                         Value *GridBitCast = Builder.CreateBitCast(Grid,  Int8PtrType);
@@ -940,14 +936,12 @@ struct Hello3 : public ModulePass {
 
 
                             Builder.CreateCall(M.getFunction("printf"), {
-                                                            Builder.CreateGlobalStringPtr("Thread of X = %d\n"),
-                                                            LoadXDimenThread});
-
-                            Builder.CreateCall(M.getFunction("printf"), {
-                                                            Builder.CreateGlobalStringPtr("Thread of Y = %d\n"),
+                                                            Builder.CreateGlobalStringPtr("%d YOLOY\n"),
                                                             LoadYDimenThread});
 
-
+                            Builder.CreateCall(M.getFunction("printf"), {
+                                                            Builder.CreateGlobalStringPtr("%d YOLOX\n"),
+                                                            LoadXDimenThread});
                         Value *ConfigureCall = dyn_cast<Value>(Builder.CreateCall(CudaConfigureCall, {LoadXDimenGrid, LoadYDimenGrid, LoadXDimenThread, LoadYDimenThread, Zero64Bit, StreamTypedNull}));
 
 
@@ -982,7 +976,6 @@ struct Hello3 : public ModulePass {
 
 
                             FunctionsToReplicate.erase(Iterator);
-
                 }
 
                 }
@@ -999,11 +992,95 @@ struct Hello3 : public ModulePass {
 }; // end of struct Hello
 
 
+
+struct Hello4 : public ModulePass {
+  static char ID;
+  Hello4() : ModulePass(ID) {}
+
+  bool runOnModule(Module &M) override {
+
+        std::vector<StringRef> FunctionsToReplicate;
+        std::vector<Value *> CudaMallocSizes;
+        std::vector<Value *> CudaMallocsOperands;
+        std::vector<Value *> CudaMemcpyOperands;
+
+        std::vector<Value *> GridOperand;
+        std::vector<Value *> ThreadOperand;
+        std::vector<Value *> GridOperandY;
+        std::vector<Value *> ThreadOperandY;
+        Function* CudaRegisterFunction = M.getFunction("__cuda_register_globals");
+        Function* CudaRegisterFunction2 = M.getFunction("__cudaRegisterFunction");
+        Function *CudaSetupArgument =  M.getFunction("cudaSetupArgument");
+        Function *CudaMalloc = M.getFunction("cudaMalloc");
+        Function *CudaMemCpy = M.getFunction("cudaMemcpy");
+        LLVMContext &Context = M.getContext();
+        FunctionCallee DimentionFunction = M.getFunction("_ZN4dim3C2Ejjj");
+
+        FunctionCallee CudaConfigureCall = M.getFunction("cudaConfigureCall");
+        Function *CudaLaunch = M.getFunction("cudaLaunch");
+
+        Type* Int64Type = Type::getInt64Ty(Context);
+        Type* Int32Type = Type::getInt32Ty(Context);
+        PointerType* Int8PtrType = Type::getInt8PtrTy(Context);
+        PointerType* Int32PtrType = Type::getInt32PtrTy(Context);
+        Type *CoercionType = StructType::create({Int64Type, Int32Type});
+        Type *DimStructTypeScalar = DimentionFunction.getFunctionType()->getParamType(0)->getPointerElementType()->getScalarType();
+
+        PointerType* StreamType = dyn_cast<PointerType>(CudaConfigureCall.getFunctionType()->getParamType(5));
+        Value* Zero32Bit = ConstantInt::get(Int32Type, 0);
+        Value* Zero64Bit = ConstantInt::get(Int64Type, 0);
+        Value *One32Bit = ConstantInt::get(Int32Type, 1);
+        Value *Twelve64Bit =  ConstantInt::get(Int64Type, 12);
+
+        MaybeAlign *Align4 = new MaybeAlign(4);
+
+
+        Value *StreamTypedNull = ConstantPointerNull::get(StreamType);
+        StringRef CalledFunctionName;
+        int DimensionFunction = 0;
+
+
+    for (Module::iterator F = M.begin(); F != M.end(); ++F) {
+        for (Function::iterator BB = F->begin(); BB != F->end(); ++BB) {
+            for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
+             if(CallInst *CudaRegisterCall = dyn_cast<CallInst>(CurrentInstruction)){
+                errs() << *CudaRegisterCall << "+++\n";
+                MDNode* M = CudaRegisterCall->getMetadata("Redundancy");
+                if(M != nullptr){
+                    StringRef Info = cast<MDString>(CudaRegisterCall->getMetadata("Redundancy")->getOperand(0))->getString();
+                    errs() << *M << "\n";
+                    errs() <<  *(M->getOperand(0)) << "\n";
+                    errs() << Info << "\n";
+                    std::pair<StringRef, StringRef> Test =  Info.split("Outputs");
+                    errs() << Test.first << "\n";
+                    errs() << Test.second << "\n";
+                    Test.first.consume_front("Inputs");
+                    errs() << Test.first << "\n";
+                    errs() << Test.second << "\n";
+                    for(int i = 0; i < Test.first.size(); i++){
+                        errs() << i << "\n";
+                        errs() << Test.first[i] << " \n";
+                    }
+                }
+             }
+         }
+       }
+    }
+
+
+
+
+    return false;
+  }
+
+}; 
+
 } // end of anonymous namespace
 
 char Hello::ID = -1;
 char Hello2::ID = -2;
 char Hello3::ID = -3;
+char Hello4::ID = -4;
 static RegisterPass<Hello> X("CUDA", "Hello World Pass",
                              false /* Only looks at CFG */,
                              false /* Analysis Pass */);
@@ -1013,6 +1090,10 @@ static RegisterPass<Hello2> XX("CUDA2", "Hello World Pass",
                                false /* Analysis Pass */);
 
 static RegisterPass<Hello3> YXX("CUDA3", "Hello World Pass",
+                               false /* Only looks at CFG */,
+                               false /* Analysis Pass */);
+
+static RegisterPass<Hello4> YXXX("CUDA4", "Hello World Pass",
                                false /* Only looks at CFG */,
                                false /* Analysis Pass */);
 
@@ -1032,4 +1113,10 @@ static RegisterStandardPasses YY(PassManagerBuilder::EP_EarlyAsPossible,
                                  [](const PassManagerBuilder &Builder,
                                     legacy::PassManagerBase &PM) {
                                    PM.add(new Hello3());
+                                 });
+
+static RegisterStandardPasses YYX(PassManagerBuilder::EP_EarlyAsPossible,
+                                 [](const PassManagerBuilder &Builder,
+                                    legacy::PassManagerBase &PM) {
+                                   PM.add(new Hello4());
                                  });

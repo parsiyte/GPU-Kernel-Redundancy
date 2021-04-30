@@ -990,11 +990,365 @@ struct Hello3 : public ModulePass {
   }
 
 }; // end of struct Hello
+
+
+
+struct Hello4 : public ModulePass {
+  static char ID;
+  Hello4() : ModulePass(ID) {}
+
+  bool runOnModule(Module &M) override {
+
+        std::vector<StringRef> FunctionsToReplicate;
+        std::vector<Value *> CudaMallocSizes;
+        std::vector<Value *> CudaMallocsOperands;
+        std::vector<Value *> CudaMemcpyOperands;
+
+        std::vector<Value *> GridOperand;
+        std::vector<Value *> ThreadOperand;
+        std::vector<Value *> GridOperandY;
+        std::vector<Value *> ThreadOperandY;
+        Function* CudaRegisterFunction = M.getFunction("__cuda_register_globals");
+        Function* CudaRegisterFunction2 = M.getFunction("__cudaRegisterFunction");
+        Function *CudaSetupArgument =  M.getFunction("cudaSetupArgument");
+        Function *CudaMalloc = M.getFunction("cudaMalloc");
+        Function *CudaMemCpy = M.getFunction("cudaMemcpy");
+        LLVMContext &Context = M.getContext();
+        FunctionCallee DimentionFunction = M.getFunction("_ZN4dim3C2Ejjj");
+
+        FunctionCallee CudaConfigureCall = M.getFunction("cudaConfigureCall");
+        Function *CudaLaunch = M.getFunction("cudaLaunch");
+
+        Type* Int64Type = Type::getInt64Ty(Context);
+        Type* Int32Type = Type::getInt32Ty(Context);
+        PointerType* Int8PtrType = Type::getInt8PtrTy(Context);
+        PointerType* Int32PtrType = Type::getInt32PtrTy(Context);
+        Type *CoercionType = StructType::create({Int64Type, Int32Type});
+        Type *DimStructTypeScalar = DimentionFunction.getFunctionType()->getParamType(0)->getPointerElementType()->getScalarType();
+
+        PointerType* StreamType = dyn_cast<PointerType>(CudaConfigureCall.getFunctionType()->getParamType(5));
+        Value* Zero32Bit = ConstantInt::get(Int32Type, 0);
+        Value* Zero64Bit = ConstantInt::get(Int64Type, 0);
+        Value *One32Bit = ConstantInt::get(Int32Type, 1);
+        Value *Twelve64Bit =  ConstantInt::get(Int64Type, 12);
+
+        MaybeAlign *Align4 = new MaybeAlign(4);
+
+
+        Value *StreamTypedNull = ConstantPointerNull::get(StreamType);
+        StringRef CalledFunctionName;
+        int DimensionFunction = 0;
+
+
+       for (Function::iterator BB = CudaRegisterFunction->begin(); BB != CudaRegisterFunction->end(); ++BB) {
+         for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
+             if(CallInst *CudaRegisterCall = dyn_cast<CallInst>(CurrentInstruction)){
+                 Value *CudaFunctionOperand = CudaRegisterCall->getArgOperand(ArgumanOrder);
+                 Function* TestF = dyn_cast<Function>(CudaFunctionOperand->stripPointerCasts());
+                 StringRef FunctionName = TestF->getName();
+                 FunctionsToReplicate.push_back(FunctionName);
+             }
+         }
+       }
+
+    for (Module::iterator F = M.begin(); F != M.end(); ++F) {
+        for (Function::iterator BB = F->begin(); BB != F->end(); ++BB) {
+            for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
+
+                if( CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)){
+                    CalledFunctionName = FunctionCall->getCalledFunction()->getName();
+                    std::vector<StringRef>::iterator Iterator =  std::find(FunctionsToReplicate.begin(),FunctionsToReplicate.end(), CalledFunctionName);
+                    if(  CalledFunctionName == "cudaMalloc") {
+                        CudaMallocsOperands.push_back(FunctionCall->getArgOperand(0));
+                        CudaMallocSizes.push_back(FunctionCall->getArgOperand(1));
+                    }
+                    else if (CalledFunctionName == "_ZN4dim3C2Ejjj") {
+                        if (DimensionFunction%2 == 1    ) {
+                            GridOperand.push_back(FunctionCall->getArgOperand(1));
+                            GridOperandY.push_back(FunctionCall->getArgOperand(2));
+                        }
+                        else {
+                            ThreadOperand.push_back(FunctionCall->getArgOperand(1));
+                            ThreadOperandY.push_back(FunctionCall->getArgOperand(2));
+                        }
+                        DimensionFunction++;
+                    }
+                    else if (CalledFunctionName == "cudaMemcpy") {
+                        CudaMemcpyOperands.push_back(FunctionCall->getArgOperand(1));
+
+
+                    }
+                    else if(Iterator != FunctionsToReplicate.end()){
+                        std::vector<Value *> ReplicatedParameters;
+
+                        FunctionCallee ReplicatedFunction =  M.getFunction(CalledFunctionName);
+
+                    Value* CudaMallocSize;
+                        int ArgSize = FunctionCall->arg_size();
+                        LoadInst *Output =  dyn_cast<LoadInst>(FunctionCall->getArgOperand(ArgSize - 1));
+                        AllocaInst *OutputAllocation = dyn_cast<AllocaInst>(Output->getOperand(0));
+                        int CountedIndex;
+                        for (auto& U : OutputAllocation->uses()) {
+                                User* User = U.getUser();
+                                if(BitCastInst* BitCast =  dyn_cast<BitCastInst>(User)){
+                                std::vector<Value*>::iterator IteratorMalloc =  std::find(CudaMallocsOperands.begin(),CudaMallocsOperands.end(), dyn_cast<Value>(User));
+                                if(IteratorMalloc != CudaMallocsOperands.end()){
+                                    CountedIndex = IteratorMalloc - CudaMallocsOperands.begin();
+                                    errs() << CountedIndex << "\n";
+                                    CudaMallocSize = CudaMallocSizes.at(CountedIndex);
+                                }
+                            }
+                        }
+                        Type* MajorityVotingType = OutputAllocation->getAllocatedType();
+                        Type* OutputType = OutputAllocation->getAllocatedType();
+                        PointerType* OutputPtrType = dyn_cast<PointerType>(OutputType);
+
+                        Type* MajorityVotingPointerType = MajorityVotingType;
+
+                        Value *NullforOutputType = ConstantPointerNull::get(OutputPtrType);
+                        int TypeID = MajorityVotingType->getTypeID();
+                        std::string MajorityVotingFunctionName = "majorityVoting" + std::to_string(TypeID);
+                        Function *MajorityVotingFunction = M.getFunction(MajorityVotingFunctionName);
+                        if (MajorityVotingFunction == nullptr) {
+                            FunctionCallee MajorityVotingCallee = M.getOrInsertFunction(MajorityVotingFunctionName, Type::getVoidTy(Context),
+                                        MajorityVotingPointerType,
+                                        MajorityVotingPointerType,
+                                        MajorityVotingPointerType,
+                                        MajorityVotingPointerType,
+                                        Type::getInt64Ty(Context)
+                                );
+                            std::vector<Value*> Parameters;
+
+                            MajorityVotingFunction = dyn_cast<Function>(MajorityVotingCallee.getCallee());
+                            MajorityVotingFunction->setCallingConv(CallingConv::C);
+                            Function::arg_iterator Args = MajorityVotingFunction->arg_begin();
+                            Value *A = Args++;
+                            A->setName("A");
+
+                            Value *B = Args++;
+                            B->setName("B");
+
+                            Value *C = Args++;
+                            C->setName("C");
+
+                            Value *Output = Args++;
+                            Output->setName("Output");
+
+                            Value *Size = Args++;
+                            Size->setName("Size");
+
+                            BasicBlock *EntryBlock = BasicBlock::Create(Context, "entry", MajorityVotingFunction);
+
+                            IRBuilder<> Builder(EntryBlock);
+
+                            Builder.SetInsertPoint(EntryBlock);
+
+                            Value *Aptr = Builder.CreateAlloca(MajorityVotingPointerType,  nullptr, "A.addr");
+
+                            Value *Bptr = Builder.CreateAlloca(MajorityVotingPointerType, nullptr, "B.addr");
+
+                            Value *Cptr = Builder.CreateAlloca(MajorityVotingPointerType, nullptr, "C.addr");
+
+                            Value *Outputptr = Builder.CreateAlloca(MajorityVotingPointerType, nullptr, "output.addr");
+
+                            Value *Sizeptr = Builder.CreateAlloca(Int64Type, nullptr, "size.addr");
+
+                            StoreInst *StoreA = Builder.CreateStore(A, Aptr);
+
+                            Value *StoreB = Builder.CreateStore(B, Bptr);
+
+                            Value *StoreC = Builder.CreateStore(C, Cptr);
+
+                            Value *StoreOutput = Builder.CreateStore(Output, Outputptr);
+
+                            Value *StoreSize = Builder.CreateStore(Size, Sizeptr);
+
+
+                            Parameters.push_back(Aptr);
+                            Parameters.push_back(Bptr);
+                            Parameters.push_back(Cptr);
+                            Parameters.push_back(Outputptr);
+                            Parameters.push_back(Sizeptr);
+
+                            int Offset = 0;
+                            int SizeParameter = 8;
+                            for(unsigned long Index = 0; Index < Parameters.size(); Index++){
+                                Value* Parameter = Parameters.at(Index);
+                                Value* BitcastParameter = Builder.CreateBitCast(Parameter, Int8PtrType);
+                                Value* OffsetValue = ConstantInt::get(Int64Type, Offset);
+                                if(Parameter->getType() == Int32PtrType)
+                                SizeParameter = 4;
+                                else
+                                SizeParameter = 8; //Diğerleri pointer olduğu için herhalde. Char*, float*, int* aynı çıktı.
+
+                                Value* SizeValue = ConstantInt::get(Int64Type, SizeParameter);
+                                Value *CudaSetupArgumentCall = Builder.CreateCall(CudaSetupArgument,  {BitcastParameter, SizeValue, OffsetValue});
+                                Instruction *IsError = dyn_cast<Instruction>(Builder.CreateICmpEQ(CudaSetupArgumentCall, Zero32Bit));
+                                if(Index == 0)
+                                Builder.CreateRetVoid(); // Buraya daha akıllıca çözüm bulmak gerekiyor. Sevimli gözükmüyor.
+
+                                Instruction *SplitPoint = SplitBlockAndInsertIfThen(IsError, IsError->getNextNode(), false);
+
+                                SplitPoint->getParent()->setName("setup.next");
+
+                                Builder.SetInsertPoint(SplitPoint);
+                                Offset += SizeParameter;
+
+                            }
+
+                            Builder.CreateCall(CudaLaunch,  {Builder.CreateBitCast(MajorityVotingFunction,Int8PtrType)});
+
+
+                            BasicBlock* CudaRegisterBlock = dyn_cast<BasicBlock>(CudaRegisterFunction->begin()) ;
+                            Instruction* FirstInstruction = dyn_cast<Instruction>(CudaRegisterBlock->begin()) ;
+                            Builder.SetInsertPoint(FirstInstruction);
+
+
+                            Value *FunctionName = Builder.CreateGlobalStringPtr(MajorityVotingFunctionName);
+                            Builder.CreateCall(
+                                CudaRegisterFunction2,
+                                {FirstInstruction->getOperand(0),
+                                Builder.CreateBitCast(MajorityVotingFunction, Int8PtrType),
+                                FunctionName,
+                                FunctionName,
+                                ConstantInt::get(Int32Type, -1),
+                                ConstantPointerNull::get(Int8PtrType),
+                                ConstantPointerNull::get(Int8PtrType),
+                                ConstantPointerNull::get(Int8PtrType),
+                                ConstantPointerNull::get(Int8PtrType),
+                                ConstantPointerNull::get(Int32PtrType)});
+                        }
+
+
+                        ReplicatedParameters.push_back(OutputAllocation);
+                        for(int Index = 0; Index < NumberOfReplication; Index++){
+                        BasicBlock * CurrentBB = FunctionCall->getParent();
+                        BasicBlock *NextBB = CurrentBB->getNextNode();
+                        Instruction *FirstInstruction = dyn_cast<Instruction>(NextBB->begin());
+                        IRBuilder<> Builder(FirstInstruction);
+
+                        std::vector<Value *> Arguments;
+                        int NumberArgument = FunctionCall->getNumArgOperands();
+
+                        for(int ArgumentIndex = 0; ArgumentIndex < NumberArgument - 1; ArgumentIndex++){
+                            LoadInst* Argument = dyn_cast<LoadInst>(FunctionCall->getArgOperand(ArgumentIndex));
+                            Arguments.push_back(Argument->getOperand(0));
+
+                            //Arguments.push_back(One32Bit);
+                        }
+                        Value* OutputReplication;
+                        if (Index < NumberOfReplication - 1) {
+                            OutputReplication = Builder.CreateAlloca(OutputType, nullptr, "dA_2");
+
+                            Builder.CreateBitCast(OutputReplication, Int8PtrType);
+                            StoreInst *OutputReplicationStore = dyn_cast<StoreInst>(Builder.CreateStore(NullforOutputType, OutputReplication));
+                            Value *OutputReplicationCasted = Builder.CreateBitCast(OutputReplicationStore->getPointerOperand(),Int8PtrType->getPointerTo());
+                            ReplicatedParameters.push_back(OutputReplication);
+                            Builder.CreateCall(CudaMalloc, {OutputReplicationCasted, CudaMallocSize});
+                            Arguments.push_back(OutputReplication);
+                            Value* OutputReplicationLoad =  Builder.CreateLoad(OutputReplication);
+
+                            Value* innn = Builder.CreateCall(CudaMemCpy, {Builder.CreateBitCast(OutputReplicationLoad,Int8PtrType), CudaMemcpyOperands.at(CountedIndex),CudaMallocSize, One32Bit });
+
+
+
+                        }
+
+
+                        AllocaInst *Grid =  Builder.CreateAlloca(DimStructTypeScalar);
+                        AllocaInst *Thread = Builder.CreateAlloca(DimStructTypeScalar);
+                        AllocaInst *GridCoercion = Builder.CreateAlloca(CoercionType);
+                        AllocaInst *ThreadCoercion = Builder.CreateAlloca(CoercionType);
+
+                        Builder.CreateCall(DimentionFunction, {Grid, GridOperand.at(GridOperand.size() - 1), GridOperandY.at(GridOperand.size() - 1), One32Bit});
+                        Builder.CreateCall(DimentionFunction, {Thread, ThreadOperand.at(ThreadOperand.size() - 1), ThreadOperandY.at(ThreadOperand.size() - 1), One32Bit});
+
+                            errs() << *ThreadOperand.at(ThreadOperand.size() - 1) << "++**--\n";
+                            errs() << *GridOperand.at(GridOperand.size() - 1) << "++**--\n";
+
+                        Value *GridCoercionyBitCast = Builder.CreateBitCast(dyn_cast<Value>(GridCoercion), Int8PtrType);
+                        Value *GridBitCast = Builder.CreateBitCast(Grid,  Int8PtrType);
+
+                        Builder.CreateMemCpy(GridCoercionyBitCast, *Align4, GridBitCast, *Align4, Twelve64Bit); //Burada 12 olmasının sebebi: 64 bit ve 32 bitlik struct olması olabilir
+
+                         Value *XDimenGrid = Builder.CreateInBoundsGEP(GridCoercion, {Zero32Bit, Zero32Bit});
+                         Value *LoadXDimenGrid = Builder.CreateLoad(XDimenGrid);
+                         Value *YDimenGrid = Builder.CreateInBoundsGEP(GridCoercion, {Zero32Bit, One32Bit});
+                         Value *LoadYDimenGrid = Builder.CreateLoad(YDimenGrid);
+
+                        Value *ThreadCoercionBitCast = Builder.CreateBitCast(ThreadCoercion, Int8PtrType);
+                        Value *ThreadBitCast = Builder.CreateBitCast(Thread,Int8PtrType);
+
+                        Builder.CreateMemCpy(ThreadCoercionBitCast, *Align4, ThreadBitCast, *Align4, Twelve64Bit);
+
+                        Value *XDimenThread = Builder.CreateInBoundsGEP(ThreadCoercion, {Zero32Bit, Zero32Bit});
+                        Value *LoadXDimenThread = Builder.CreateLoad(XDimenThread);
+                        Value *YDimenThread = Builder.CreateInBoundsGEP(ThreadCoercion, {Zero32Bit, One32Bit});
+                        Value *LoadYDimenThread = Builder.CreateLoad(YDimenThread);
+
+
+                            Builder.CreateCall(M.getFunction("printf"), {
+                                                            Builder.CreateGlobalStringPtr("%d YOLOY\n"),
+                                                            LoadYDimenThread});
+
+                            Builder.CreateCall(M.getFunction("printf"), {
+                                                            Builder.CreateGlobalStringPtr("%d YOLOX\n"),
+                                                            LoadXDimenThread});
+                        Value *ConfigureCall = dyn_cast<Value>(Builder.CreateCall(CudaConfigureCall, {LoadXDimenGrid, LoadYDimenGrid, LoadXDimenThread, LoadYDimenThread, Zero64Bit, StreamTypedNull}));
+
+
+                        Value *IsError = Builder.CreateICmpNE(ConfigureCall, One32Bit);
+
+                        Instruction *Splitted = SplitBlockAndInsertIfThen(IsError, dyn_cast<Instruction>(IsError)->getNextNode(), false);
+
+
+                        Builder.SetInsertPoint(Splitted);
+
+                        if (Index < NumberOfReplication - 1) {
+                            std::vector<Value *> ReplicationFunctionArguments;
+                            for (unsigned long Index2 = 0; Index2 < Arguments.size(); Index2++) {
+                                    Value *Parameter = Arguments.at(Index2);
+                                    ReplicationFunctionArguments.push_back(Builder.CreateLoad(Parameter));
+                            }
+                            FunctionCall = Builder.CreateCall(ReplicatedFunction, ReplicationFunctionArguments);
+                        } else {
+                            std::vector<Value *> MajorityVotingArguments;
+                            for (unsigned long Index2 = 0; Index2 < ReplicatedParameters.size(); Index2++) {
+                                    Value *Parameter = ReplicatedParameters.at(Index2);
+                                    MajorityVotingArguments.push_back(Builder.CreateLoad(Parameter));
+                            }
+                            Value *Parameter = ReplicatedParameters.at(0);
+                            Value *Size =  ConstantInt::get(Int64Type, 12);
+                            MajorityVotingArguments.push_back(Builder.CreateLoad(Parameter));
+                            MajorityVotingArguments.push_back(CudaMallocSize);
+                            FunctionCall = Builder.CreateCall(MajorityVotingFunction, MajorityVotingArguments);
+                        }
+
+                        }
+
+
+                            FunctionsToReplicate.erase(Iterator);
+                }
+
+                }
+            }
+        }
+
+    }
+
+
+
+    return false;
+  }
+
+}; 
+
 } // end of anonymous namespace
 
 char Hello::ID = -1;
 char Hello2::ID = -2;
 char Hello3::ID = -3;
+char Hello4::ID = -4;
 static RegisterPass<Hello> X("CUDA", "Hello World Pass",
                              false /* Only looks at CFG */,
                              false /* Analysis Pass */);
@@ -1004,6 +1358,10 @@ static RegisterPass<Hello2> XX("CUDA2", "Hello World Pass",
                                false /* Analysis Pass */);
 
 static RegisterPass<Hello3> YXX("CUDA3", "Hello World Pass",
+                               false /* Only looks at CFG */,
+                               false /* Analysis Pass */);
+
+static RegisterPass<Hello3> YXXX("CUDA4", "Hello World Pass",
                                false /* Only looks at CFG */,
                                false /* Analysis Pass */);
 
@@ -1023,4 +1381,10 @@ static RegisterStandardPasses YY(PassManagerBuilder::EP_EarlyAsPossible,
                                  [](const PassManagerBuilder &Builder,
                                     legacy::PassManagerBase &PM) {
                                    PM.add(new Hello3());
+                                 });
+
+static RegisterStandardPasses YYX(PassManagerBuilder::EP_EarlyAsPossible,
+                                 [](const PassManagerBuilder &Builder,
+                                    legacy::PassManagerBase &PM) {
+                                   PM.add(new Hello4());
                                  });
