@@ -9,8 +9,10 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/Pass.h"
+#include "llvm/IR/Value.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/IR/LegacyPassManager.h"
@@ -39,7 +41,10 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include <algorithm>
+#include <cstddef>
 #include <string>
+#include <utility>
+#include <vector>
 using namespace llvm;
 #define  ArgumanOrder  1 // Cuda Register Fonksiyonu çağrılırken 1 arguman fonksiyonu veriyor. Gelecek Cuda versiyonlarında değişme ihtimaline karşı en üste tanımladık.
 #define NumberOfReplication 3
@@ -661,12 +666,12 @@ struct Hello3 : public ModulePass {
         Function *CudaSetupArgument =  M.getFunction("cudaSetupArgument");
         Function *CudaMalloc = M.getFunction("cudaMalloc");
         Function *CudaMemCpy = M.getFunction("cudaMemcpy");
-        LLVMContext &Context = M.getContext();
         FunctionCallee DimentionFunction = M.getFunction("_ZN4dim3C2Ejjj");
 
         FunctionCallee CudaConfigureCall = M.getFunction("cudaConfigureCall");
         Function *CudaLaunch = M.getFunction("cudaLaunch");
 
+        LLVMContext &Context = M.getContext();
         Type* Int64Type = Type::getInt64Ty(Context);
         Type* Int32Type = Type::getInt32Ty(Context);
         PointerType* Int8PtrType = Type::getInt8PtrTy(Context);
@@ -896,7 +901,7 @@ struct Hello3 : public ModulePass {
                             Arguments.push_back(OutputReplication);
                             Value* OutputReplicationLoad =  Builder.CreateLoad(OutputReplication);
 
-                            Value* innn = Builder.CreateCall(CudaMemCpy, {Builder.CreateBitCast(OutputReplicationLoad,Int8PtrType), CudaMemcpyOperands.at(CountedIndex),CudaMallocSize, One32Bit });
+                            //Value* innn = Builder.CreateCall(CudaMemCpy, {Builder.CreateBitCast(OutputReplicationLoad,Int8PtrType), CudaMemcpyOperands.at(CountedIndex),CudaMallocSize, One32Bit });
 
 
 
@@ -997,75 +1002,267 @@ struct Hello4 : public ModulePass {
   static char ID;
   Hello4() : ModulePass(ID) {}
 
+  bool isReplicate(CallInst* FunctionCall){
+      return FunctionCall->hasMetadata("Redundancy");
+  }
+
+  StringRef getMetadataString(MDNode* RedundancyMetadata){
+      return cast<MDString>(RedundancyMetadata->getOperand(0))->getString();
+  }
+
+  std::vector<std::string> parseData(StringRef InputOrOutput){
+        std::string InputOrOutputString = InputOrOutput.trim("Inputs &").str();
+        std::string Variable = "";
+        std::vector<std::string> Variables;
+        for(size_t CharIndex = 0; CharIndex <= InputOrOutputString.size(); CharIndex++){
+            char CurrentChar = '\0';
+            if(CharIndex != InputOrOutputString.size())
+                CurrentChar = InputOrOutputString.at(CharIndex);
+            if((CurrentChar  == '&' || CharIndex == InputOrOutputString.size())){
+                Variables.push_back(Variable);
+                Variable = "";
+                continue;
+            }
+            
+            Variable += CurrentChar;
+        }
+        return Variables;
+  }
+
+    std::pair<std::vector<std::string>, std::vector<std::string>> parseMetadataString(StringRef MetadataString){
+       std::pair<StringRef, StringRef> InputsAndOutputs = MetadataString.split("Outputs");
+        StringRef InputsAsString = InputsAndOutputs.first;
+        StringRef OutputsAsString = InputsAndOutputs.second;
+        std::vector<std::string> Inputs = parseData(InputsAsString);
+        std::vector<std::string> Outputs = parseData(OutputsAsString);
+        return std::make_pair(Inputs, Outputs);
+  }
+
+ std::pair <Value*, std::pair<Type* ,Type* >> getSizeofDevice(std::vector<CallInst *> CudaMallocFunctionCalls, std::string Output){
+      Value* Size = nullptr;
+      std::pair<Type*, Type*> Types;
+      for(size_t Index = 0; Index < CudaMallocFunctionCalls.size(); Index++){
+          CallInst* CudaMallocFunctionCall = CudaMallocFunctionCalls.at(Index);
+          AllocaInst* AllocaVariable = nullptr;
+          Type* DestinationType = nullptr;
+          //errs() << *CudaMallocFunctionCall->getArgOperand(0) << "\n";
+          if(BitCastInst* BitCastVariable = dyn_cast<BitCastInst>(CudaMallocFunctionCall->getArgOperand(0))){
+              AllocaVariable = dyn_cast<AllocaInst>(BitCastVariable->getOperand(0));
+              DestinationType = dyn_cast<PointerType>(BitCastVariable->getDestTy())->getElementType();
+          }else if(dyn_cast_or_null<AllocaInst>(CudaMallocFunctionCall->getArgOperand(0)) != nullptr){;
+              AllocaVariable = dyn_cast<AllocaInst>(CudaMallocFunctionCall->getArgOperand(0)) ;
+              DestinationType = dyn_cast<PointerType>(AllocaVariable->getAllocatedType());
+          } 
+          errs() << *AllocaVariable << "\n";
+          errs() << AllocaVariable->getName() << "\n";
+          errs() << AllocaVariable->getName().str() << "\n";
+          std::string VariableName = AllocaVariable->getName().str();
+          if(VariableName == Output){
+            Size = CudaMallocFunctionCall->getArgOperand(1);
+            Types = std::make_pair(AllocaVariable->getAllocatedType(), DestinationType);
+            break;
+          }
+      }
+      return std::make_pair(Size, Types);
+  }
+
+  Value* createAndAllocateVariable(Value* Callee, std::string VariableName, Value* Size, IRBuilder<> Builder, Type* VariableType, Type* DestinationType){
+      errs() << *VariableType << "\n";
+      
+      Value *NullforOutputType = ConstantPointerNull::get(dyn_cast<PointerType>(VariableType));
+      Value* Allocated =  Builder.CreateAlloca(VariableType, nullptr,VariableName);
+      Builder.CreateBitCast(Allocated, DestinationType);
+      Builder.CreateStore(NullforOutputType, Allocated);
+      Value *SecondReplicationCasted = Builder.CreateBitCast(Allocated, DestinationType->getPointerTo());
+      errs() << *Callee->getType() << "\n";
+      errs() << *SecondReplicationCasted->getType() << "\n";
+      errs() << *Size->getType() << "\n";
+      errs() << *DestinationType->getPointerTo() << "\n";
+      Builder.CreateCall(Callee, {SecondReplicationCasted, Size});
+      //Builder.CreateLoad(Allocated);
+      return  Allocated;
+  }
+
+   std::pair < std::pair <std::vector<Value *>, std::vector<Value *>>, std::vector<Type *>> getDimensions(BasicBlock* BB){
+    StringRef GridDimName;
+    StringRef BlockName;
+    Value* GridDim; 
+    Value* BlockDim; 
+
+    std::vector<Value *> Block;
+    std::vector<Value *> Grid;
+    std::vector<Type *> Types;
+    Type* DimensionType;
+    Type* SteamType;
+    std::vector<CallInst *> DimensionFunctions;
+    for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
+        if(CallInst* FunctionCall =  dyn_cast<CallInst>(CurrentInstruction)){
+            StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
+            StringRef DimensionVariableName;
+            if(FunctionName == "cudaConfigureCall"){
+                GridDim = dyn_cast<GetElementPtrInst>(dyn_cast<LoadInst>(FunctionCall->getOperand(0))->getOperand(0))->getOperand(0);
+                BlockDim = dyn_cast<GetElementPtrInst>(dyn_cast<LoadInst>(FunctionCall->getOperand(2))->getOperand(0))->getOperand(0);
+                SteamType = FunctionCall->getOperand(5)->getType();
+                Types.push_back(SteamType);
+                GridDimName =  GridDim->getName().rtrim(".coerce");
+                BlockName =  BlockDim->getName().rtrim(".coerce");
+                for(auto& DimensionCall : DimensionFunctions){
+                    DimensionVariableName = DimensionCall->getOperand(0)->getValueName()->getKeyData();
+                    if(DimensionVariableName == BlockName){
+                        DimensionType = DimensionCall->getOperand(0)->getType()->getPointerElementType();
+                        Types.push_back(DimensionType);
+                        for(int Index = 1; Index < 4; Index++){
+                            Block.push_back(DimensionCall->getOperand(Index));
+                        }
+                    }else if(DimensionVariableName == GridDimName){
+                        for(int Index = 1; Index < 4; Index++){
+                            Grid.push_back(DimensionCall->getOperand(Index));
+                        }
+                    }
+                }
+            }else if(FunctionName == "_ZN4dim3C2Ejjj"){
+                DimensionFunctions.push_back(FunctionCall);
+            }     
+      }
+    }
+    return std::make_pair(std::make_pair(Block , Grid), Types);
+  }
+
+  Instruction* createDimensions(Function* Configure, IRBuilder<> Builder, std::vector<Value *> Block, std::vector<Value *> Grid, Type* DimensionType, Type* CoercionType, Function* DimFunction, Type* SteamType){
+      errs() << "Test" << "\n";
+      MaybeAlign *Align4 = new MaybeAlign(4);
+      Type* Int8Ptr = Type::getInt8PtrTy(DimFunction->getContext());
+      Type* Int64Type = Type::getInt64Ty(DimFunction->getContext());
+      Type* Int32Type = Type::getInt32Ty(DimFunction->getContext());
+      Value *Twelve64Bit =  ConstantInt::get(Int64Type, 12);
+      Value *Zero32Bit =  ConstantInt::get(Int32Type, 0);
+      Value *One32Bit =  ConstantInt::get(Int32Type, 1);
+      Value *Zero64Bit =  ConstantInt::get(Int64Type, 0);
+      Value *NullSteam = ConstantPointerNull::get(dyn_cast<PointerType>(SteamType));
+
+      Value* BlockAlloca = Builder.CreateAlloca(DimensionType, nullptr);
+      Value* GridAlloca = Builder.CreateAlloca(DimensionType, nullptr);      
+
+      Value* BlockCoercionAlloca = Builder.CreateAlloca(CoercionType, nullptr);
+      Value* GridCoercionAlloca = Builder.CreateAlloca(CoercionType , nullptr);
+
+
+      Block.insert(Block.begin(),BlockAlloca);
+      Grid.insert(Grid.begin(),GridAlloca);
+      Builder.CreateCall(DimFunction,{Block});
+      Builder.CreateCall(DimFunction,{Grid});
+      
+      Value* BlockCoercionBitcast = Builder.CreateBitCast(BlockCoercionAlloca, Int8Ptr);
+      Value* BlockBitcast = Builder.CreateBitCast(BlockAlloca, Int8Ptr);
+      Builder.CreateMemCpy(BlockCoercionBitcast, *Align4, BlockBitcast,*Align4,Twelve64Bit);
+      Value* BlockX = Builder.CreateInBoundsGEP(BlockCoercionAlloca,{Zero32Bit, Zero32Bit} );
+      Value* BlockXArg = Builder.CreateLoad(BlockX);
+      Value* BlockY = Builder.CreateInBoundsGEP(BlockCoercionAlloca,{Zero32Bit,  One32Bit});
+      Value* BlockYArg = Builder.CreateLoad(BlockY);
+      
+      Value* GridCoercionBitcast = Builder.CreateBitCast(GridCoercionAlloca, Int8Ptr);
+      Value* GridBitcast = Builder.CreateBitCast(GridAlloca, Int8Ptr);
+      Builder.CreateMemCpy(GridCoercionBitcast, *Align4, GridBitcast,*Align4,Twelve64Bit);
+      Value* GridX = Builder.CreateInBoundsGEP(GridCoercionAlloca,{Zero32Bit, Zero32Bit} );
+      Value* GridXArg = Builder.CreateLoad(GridX);
+      Value* GridY = Builder.CreateInBoundsGEP(GridCoercionAlloca,{Zero32Bit,  One32Bit});
+      Value* GridYArg = Builder.CreateLoad(GridY);
+      Value* ConfigureCall = Builder.CreateCall(Configure, {BlockXArg, BlockYArg, GridXArg, GridYArg, Zero64Bit, NullSteam});
+      Value* Condition = Builder.CreateICmpNE(ConfigureCall, One32Bit);
+      Instruction*  NewInstruction = SplitBlockAndInsertIfThen(Condition, dyn_cast<Instruction>(Condition)->getNextNode() , false);
+      return NewInstruction;
+  }
+
+  Value* replicateTheFunction(IRBuilder<> Builder, CallInst* FunctionCall, std::vector<Value*> CreatedOutputs, std::vector<Value*> Args){
+      std::vector<Value*> Parameters;
+
+      for(size_t Index = 0; Index < Args.size(); Index++){
+          Instruction* Load = Builder.CreateLoad(Args.at(Index));
+          Parameters.push_back(Load);
+      }
+
+      for(size_t Index = 0; Index < CreatedOutputs.size(); Index++){
+          Instruction* Load = Builder.CreateLoad(CreatedOutputs.at(Index));
+          Parameters.push_back(Load);
+      }
+      Function* Function = FunctionCall->getCalledFunction();
+
+      Builder.CreateCall(Function, Parameters);
+      return nullptr;
+  }  
+  
+  std::vector<Value *> getArgs(CallInst* FunctionCall, std::vector<std::string> Outputs){
+    std::vector<Value *> Args;
+    for(size_t Index = 0; Index < FunctionCall->arg_size(); Index++){
+        LoadInst* ArgLoad = dyn_cast<LoadInst>(FunctionCall->getArgOperand(Index));
+        AllocaInst* ArgAlloca = dyn_cast<AllocaInst>(ArgLoad->getOperand(0));
+        std::string ArgName = ArgAlloca->getName().str();
+        bool IsOutput = std::find(Outputs.begin(), Outputs.end(), ArgName) == Outputs.end();
+        if(IsOutput){
+            Args.push_back(ArgAlloca);
+        }
+     
+}
+   return Args;
+  }
+
   bool runOnModule(Module &M) override {
+    Function* CudaMalloc = M.getFunction("cudaMalloc");
+    Function* DimFunction = M.getFunction("_ZN4dim3C2Ejjj");
+    Function* ConfigureFunction = M.getFunction("cudaConfigureCall");
 
-        std::vector<StringRef> FunctionsToReplicate;
-        std::vector<Value *> CudaMallocSizes;
-        std::vector<Value *> CudaMallocsOperands;
-        std::vector<Value *> CudaMemcpyOperands;
-
-        std::vector<Value *> GridOperand;
-        std::vector<Value *> ThreadOperand;
-        std::vector<Value *> GridOperandY;
-        std::vector<Value *> ThreadOperandY;
-        Function* CudaRegisterFunction = M.getFunction("__cuda_register_globals");
-        Function* CudaRegisterFunction2 = M.getFunction("__cudaRegisterFunction");
-        Function *CudaSetupArgument =  M.getFunction("cudaSetupArgument");
-        Function *CudaMalloc = M.getFunction("cudaMalloc");
-        Function *CudaMemCpy = M.getFunction("cudaMemcpy");
-        LLVMContext &Context = M.getContext();
-        FunctionCallee DimentionFunction = M.getFunction("_ZN4dim3C2Ejjj");
-
-        FunctionCallee CudaConfigureCall = M.getFunction("cudaConfigureCall");
-        Function *CudaLaunch = M.getFunction("cudaLaunch");
-
-        Type* Int64Type = Type::getInt64Ty(Context);
-        Type* Int32Type = Type::getInt32Ty(Context);
-        PointerType* Int8PtrType = Type::getInt8PtrTy(Context);
-        PointerType* Int32PtrType = Type::getInt32PtrTy(Context);
-        Type *CoercionType = StructType::create({Int64Type, Int32Type});
-        Type *DimStructTypeScalar = DimentionFunction.getFunctionType()->getParamType(0)->getPointerElementType()->getScalarType();
-
-        PointerType* StreamType = dyn_cast<PointerType>(CudaConfigureCall.getFunctionType()->getParamType(5));
-        Value* Zero32Bit = ConstantInt::get(Int32Type, 0);
-        Value* Zero64Bit = ConstantInt::get(Int64Type, 0);
-        Value *One32Bit = ConstantInt::get(Int32Type, 1);
-        Value *Twelve64Bit =  ConstantInt::get(Int64Type, 12);
-
-        MaybeAlign *Align4 = new MaybeAlign(4);
-
-
-        Value *StreamTypedNull = ConstantPointerNull::get(StreamType);
-        StringRef CalledFunctionName;
-        int DimensionFunction = 0;
-
-
+    LLVMContext &Context = M.getContext();
+    Type* Int64Type = Type::getInt64Ty(Context);
+    Type* Int32Type = Type::getInt32Ty(Context);
+    PointerType* Int8PtrType = Type::getInt8PtrTy(Context);
+    PointerType* Int32PtrType = Type::getInt32PtrTy(Context);
+    Type *CoercionType = StructType::create({Int64Type, Int32Type});
+    std::vector<CallInst *> CudaMallocFunctionCalls;
     for (Module::iterator F = M.begin(); F != M.end(); ++F) {
         for (Function::iterator BB = F->begin(); BB != F->end(); ++BB) {
             for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
-             if(CallInst *CudaRegisterCall = dyn_cast<CallInst>(CurrentInstruction)){
-                errs() << *CudaRegisterCall << "+++\n";
-                MDNode* M = CudaRegisterCall->getMetadata("Redundancy");
-                if(M != nullptr){
-                    StringRef Info = cast<MDString>(CudaRegisterCall->getMetadata("Redundancy")->getOperand(0))->getString();
-                    errs() << *M << "\n";
-                    errs() <<  *(M->getOperand(0)) << "\n";
-                    errs() << Info << "\n";
-                    std::pair<StringRef, StringRef> Test =  Info.split("Outputs");
-                    errs() << Test.first << "\n";
-                    errs() << Test.second << "\n";
-                    Test.first.consume_front("Inputs");
-                    errs() << Test.first << "\n";
-                    errs() << Test.second << "\n";
-                    for(int i = 0; i < Test.first.size(); i++){
-                        errs() << i << "\n";
-                        errs() << Test.first[i] << " \n";
+                if(CallInst* FunctionCall =  dyn_cast<CallInst>(CurrentInstruction)){
+                   StringRef FunctionName = FunctionCall->getCalledFunction()->getName();     
+                    if(isReplicate(FunctionCall)){
+                        for(int i = 0; i < 2; i++){
+                        BasicBlock *CurrentBB = FunctionCall->getParent();
+                        BasicBlock *NextBB = CurrentBB->getNextNode();
+                        BasicBlock *PrevBB = CurrentBB->getPrevNode();
+                        Instruction *FirstInstruction = dyn_cast<Instruction>(NextBB->begin());
+                        IRBuilder<> Builder(FirstInstruction);
+                        MDNode* RedundancyMetadata = FunctionCall->getMetadata("Redundancy");
+                        StringRef MetadataString = getMetadataString(RedundancyMetadata);
+                        std::pair<std::vector<std::string>, std::vector<std::string>> InputsAndOutputs = parseMetadataString(MetadataString);
+                        std::vector<std::string> Inputs = InputsAndOutputs.first;
+                        std::vector<std::string> Outputs = InputsAndOutputs.second;
+                        std::vector<Value*> CreatedOutputs;
+                        for(size_t Index = 0; Index < Outputs.size(); Index++){
+                             std::string VariableName = Outputs[Index];
+                             std::pair <Value*, std::pair<Type* ,Type* >>  SizeOfTheOutput = getSizeofDevice(CudaMallocFunctionCalls,VariableName);
+                             Value* NewOutput = createAndAllocateVariable(CudaMalloc, VariableName, SizeOfTheOutput.first ,Builder, SizeOfTheOutput.second.first, SizeOfTheOutput.second.second);                          
+                             CreatedOutputs.push_back(NewOutput);
+                            }   
+                        std::pair < std::pair< std::vector<Value *>,std::vector<Value *>> , std::vector<Type *>> DimensionsAndType = getDimensions(PrevBB); 
+                        std::vector<Value *> Block = DimensionsAndType.first.first;
+                        std::vector<Value *> Grid = DimensionsAndType.first.second;
+                        std::vector<Type *> Types = DimensionsAndType.second;
+    
+                        Instruction* NewInstruction = createDimensions(ConfigureFunction, Builder, Block, Grid, Types.at(1), CoercionType, DimFunction, Types.at(0));
+                        Builder.SetInsertPoint(NewInstruction);
+                        std::vector<Value *> Args = getArgs(FunctionCall, Outputs);
+                        replicateTheFunction(Builder, FunctionCall, CreatedOutputs, Args);
                     }
+                    }else if(FunctionName.contains("cudaMalloc")){
+                        CudaMallocFunctionCalls.push_back(FunctionCall);
+                    } 
+
+
+
                 }
-             }
-         }
-       }
     }
+    }
+    }
+
 
 
 
@@ -1081,21 +1278,23 @@ char Hello::ID = -1;
 char Hello2::ID = -2;
 char Hello3::ID = -3;
 char Hello4::ID = -4;
+
 static RegisterPass<Hello> X("CUDA", "Hello World Pass",
-                             false /* Only looks at CFG */,
-                             false /* Analysis Pass */);
+                             false ,
+                             false) ;
 
 static RegisterPass<Hello2> XX("CUDA2", "Hello World Pass",
-                               false /* Only looks at CFG */,
-                               false /* Analysis Pass */);
+                               false ,
+                               false );
 
 static RegisterPass<Hello3> YXX("CUDA3", "Hello World Pass",
-                               false /* Only looks at CFG */,
-                               false /* Analysis Pass */);
+                               false ,
+                               false );
 
 static RegisterPass<Hello4> YXXX("CUDA4", "Hello World Pass",
                                false /* Only looks at CFG */,
                                false /* Analysis Pass */);
+
 
 static RegisterStandardPasses Y(PassManagerBuilder::EP_EarlyAsPossible,
                                 [](const PassManagerBuilder &Builder,
