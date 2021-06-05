@@ -6,6 +6,7 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Value.h"
@@ -556,7 +557,6 @@ struct Hello2 : public ModulePass {
     // auto XX =  Builder.CreateInBoundsGEP(printFAlloca,
     // {ConstantInt::get(Type::getInt32Ty(Context),0),ConstantInt::get(Type::getInt32Ty(Context),0)});
     Value *ArraySizeValue = Builder.CreateLoad(DeviceArraySizeAllocation);
-  
 
     // Builder.CreateStore(TID,XX);
 
@@ -570,9 +570,8 @@ struct Hello2 : public ModulePass {
     Value *TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
     Value *PointerToTIDthElementOfDeviceA =
         Builder.CreateInBoundsGEP(DeviceAPointer, TID64Bit);
-    Value *TIDthElementOfDeviceA = Builder.CreateLoad(PointerToTIDthElementOfDeviceA);   
-
-
+    Value *TIDthElementOfDeviceA =
+        Builder.CreateLoad(PointerToTIDthElementOfDeviceA);
 
     Value *DeviceBPointer = Builder.CreateLoad(DeviceBAllocation);
     TID = Builder.CreateLoad(ThreadIDptr);
@@ -602,8 +601,6 @@ struct Hello2 : public ModulePass {
     Builder.CreateStore(TIDthElementOfDeviceA,
                         PointerToTIDthElementOfDeviceOutput);
 
-    
-
     Builder.CreateBr(TailBlock);
 
     Builder.SetInsertPoint(ElseBlock); // Burası Else
@@ -624,13 +621,13 @@ struct Hello2 : public ModulePass {
     Builder.CreateBr(TailBlock);
 
     Builder.SetInsertPoint(TailBlock);
-    
-/*
-    Builder.CreateCall(
-        M.getFunction("vprintf"),
-        {Builder.CreateGlobalStringPtr("CUDA'nın içindeyiz\n"),
-         ConstantPointerNull::get(Type::getInt8PtrTy(M.getContext()))});
-*/
+
+    /*
+        Builder.CreateCall(
+            M.getFunction("vprintf"),
+            {Builder.CreateGlobalStringPtr("CUDA'nın içindeyiz\n"),
+             ConstantPointerNull::get(Type::getInt8PtrTy(M.getContext()))});
+    */
     Annotations->addOperand(MDNode::concatenate(
         MDNode::get(C, ValueAsMetadata::get(MajorityVotingFunction)), Con));
 
@@ -935,7 +932,8 @@ struct Hello3 : public ModulePass {
 
                   // Value* innn = Builder.CreateCall(CudaMemCpy,
                   // {Builder.CreateBitCast(OutputReplicationLoad,Int8PtrType),
-                  // CudaMemcpyOperands.at(CountedIndex),CudaMallocSize, One32Bit
+                  // CudaMemcpyOperands.at(CountedIndex),CudaMallocSize,
+                  // One32Bit
                   // });
                 }
 
@@ -987,14 +985,14 @@ struct Hello3 : public ModulePass {
                 Value *YDimenThread = Builder.CreateInBoundsGEP(
                     ThreadCoercion, {Zero32Bit, One32Bit});
                 Value *LoadYDimenThread = Builder.CreateLoad(YDimenThread);
-            /*
-                Builder.CreateCall(M.getFunction("printf"),
-                                   {Builder.CreateGlobalStringPtr("%d YOLOY\n"),
-                                    LoadYDimenThread});
+                /*
+                    Builder.CreateCall(M.getFunction("printf"),
+                                       {Builder.CreateGlobalStringPtr("%d
+                   YOLOY\n"), LoadYDimenThread});
 
-                Builder.CreateCall(M.getFunction("printf"),
-                                   {Builder.CreateGlobalStringPtr("%d YOLOX\n"),
-                                    LoadXDimenThread});*/   
+                    Builder.CreateCall(M.getFunction("printf"),
+                                       {Builder.CreateGlobalStringPtr("%d
+                   YOLOX\n"), LoadXDimenThread});*/
                 Value *ConfigureCall = dyn_cast<Value>(Builder.CreateCall(
                     CudaConfigureCall,
                     {LoadXDimenGrid, LoadYDimenGrid, LoadXDimenThread,
@@ -1061,7 +1059,11 @@ struct Hello4 : public ModulePass {
   }
 
   std::vector<std::string> parseData(StringRef InputOrOutput) {
-    std::string InputOrOutputString = InputOrOutput.trim("Inputs &").str();
+    std::string InputOrOutputString = InputOrOutput.str();
+    size_t Position = InputOrOutputString.find("Inputs &");
+    if (Position != std::string::npos)
+      InputOrOutputString.erase(Position, 8);
+
     std::string Variable = "";
     std::vector<std::string> Variables;
     for (size_t CharIndex = 0; CharIndex <= InputOrOutputString.size();
@@ -1069,6 +1071,7 @@ struct Hello4 : public ModulePass {
       char CurrentChar = '\0';
       if (CharIndex != InputOrOutputString.size())
         CurrentChar = InputOrOutputString.at(CharIndex);
+
       if ((CurrentChar == '&' || CharIndex == InputOrOutputString.size())) {
         Variables.push_back(Variable);
         Variable = "";
@@ -1083,7 +1086,7 @@ struct Hello4 : public ModulePass {
   std::pair<std::vector<std::string>, std::vector<std::string>>
   parseMetadataString(StringRef MetadataString) {
     std::pair<StringRef, StringRef> InputsAndOutputs =
-        MetadataString.split("Outputs");
+        MetadataString.split("Outputs &");
     StringRef InputsAsString = InputsAndOutputs.first;
     StringRef OutputsAsString = InputsAndOutputs.second;
     std::vector<std::string> Inputs = parseData(InputsAsString);
@@ -1114,7 +1117,6 @@ struct Hello4 : public ModulePass {
             dyn_cast<PointerType>(AllocaVariable->getAllocatedType());
       }
       std::string VariableName = AllocaVariable->getName().str();
-      errs() << Output << " " << VariableName << "\n";
       if (VariableName == Output) {
         Size = CudaMallocFunctionCall->getArgOperand(1);
         Types =
@@ -1161,6 +1163,7 @@ struct Hello4 : public ModulePass {
     std::vector<CallInst *> DimensionFunctions;
     for (BasicBlock::iterator CurrentInstruction = BB->begin();
          CurrentInstruction != BB->end(); ++CurrentInstruction) {
+          // errs() << *CurrentInstruction << "\n";
       if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
         StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
         StringRef DimensionVariableName;
@@ -1173,6 +1176,7 @@ struct Hello4 : public ModulePass {
                          dyn_cast<LoadInst>(FunctionCall->getOperand(2))
                              ->getOperand(0))
                          ->getOperand(0);
+          /*
           SteamType = FunctionCall->getOperand(5)->getType();
           Types.push_back(SteamType);
           GridDimName = GridDim->getName().rtrim(".coerce");
@@ -1180,6 +1184,7 @@ struct Hello4 : public ModulePass {
           for (auto &DimensionCall : DimensionFunctions) {
             DimensionVariableName =
                 DimensionCall->getOperand(0)->getValueName()->getKeyData();
+            errs() << *DimensionCall << " " << DimensionVariableName << "++\n";
             if (DimensionVariableName == BlockName) {
               DimensionType = DimensionCall->getOperand(0)
                                   ->getType()
@@ -1193,10 +1198,12 @@ struct Hello4 : public ModulePass {
                 Grid.push_back(DimensionCall->getOperand(Index));
               }
             }
-          }
-        } else if (FunctionName == "_ZN4dim3C2Ejjj") {
+          }*/
+        } else if (FunctionName.contains("_ZN4dim3C2Ejjj") == true) {
           DimensionFunctions.push_back(FunctionCall);
         }
+      }else if (MemCpyInst *MemoryCopy = dyn_cast<MemCpyInst>(CurrentInstruction)){
+        errs() << *MemoryCopy << "+*+*\n";
       }
     }
     return std::make_pair(std::make_pair(Block, Grid), Types);
@@ -1207,8 +1214,7 @@ struct Hello4 : public ModulePass {
                                 std::vector<Value *> Grid, Type *DimensionType,
                                 Type *CoercionType, Function *DimFunction,
                                 Type *SteamType) {
-    errs() << "Test"
-           << "\n";
+
     MaybeAlign *Align4 = new MaybeAlign(4);
     Type *Int8Ptr = Type::getInt8PtrTy(DimFunction->getContext());
     Type *Int64Type = Type::getInt64Ty(DimFunction->getContext());
@@ -1271,10 +1277,11 @@ struct Hello4 : public ModulePass {
     for (size_t Index = 0; Index < Args.size(); Index++) {
       Instruction *Load = Builder.CreateLoad(Args.at(Index));
 
-    LLVMContext &Context = FunctionCall->getParent()->getParent()->getContext();
-    Type *Int32Type = Type::getInt32Ty(Context);    
-    Value *One32Bit = ConstantInt::get(Int32Type, 1);
-      Parameters.push_back(Load );
+      LLVMContext &Context =
+          FunctionCall->getParent()->getParent()->getContext();
+      Type *Int32Type = Type::getInt32Ty(Context);
+      Value *One32Bit = ConstantInt::get(Int32Type, 1);
+      Parameters.push_back(Load);
     }
 
     for (size_t Index = 0; Index < CreatedOutputs.size(); Index++) {
@@ -1303,10 +1310,10 @@ struct Hello4 : public ModulePass {
     return Args;
   }
 
-  Function *CreateMajorityVoting(Module &M,
+  Function *createMajorityVoting(Module &M,
                                  PointerType *MajorityVotingPointerType) {
     std::string MajorityVotingFunctionName = "majorityVoting15";
-        //std::to_string(MajorityVotingPointerType->getTypeID());
+    // std::to_string(MajorityVotingPointerType->getTypeID());
 
     Function *CudaRegisterFunction = M.getFunction("__cuda_register_globals");
     Function *CudaRegisterFunction2 = M.getFunction("__cudaRegisterFunction");
@@ -1320,7 +1327,6 @@ struct Hello4 : public ModulePass {
     Value *Zero32Bit = ConstantInt::get(Int32Type, 0);
     PointerType *Int8PtrType = Type::getInt8PtrTy(Context);
     PointerType *Int32PtrType = Type::getInt32PtrTy(Context);
-
 
     FunctionCallee MajorityVotingCallee = M.getOrInsertFunction(
         MajorityVotingFunctionName, Type::getVoidTy(Context),
@@ -1443,16 +1449,17 @@ struct Hello4 : public ModulePass {
     Function *CudaMalloc = M.getFunction("cudaMalloc");
     Function *DimFunction = M.getFunction("_ZN4dim3C2Ejjj");
     Function *ConfigureFunction = M.getFunction("cudaConfigureCall");
-
+    CallInst *CUDA;
     LLVMContext &Context = M.getContext();
     Type *Int64Type = Type::getInt64Ty(Context);
     Type *Int32Type = Type::getInt32Ty(Context);
+      Value *One32Bit = ConstantInt::get(Int32Type, 1);
     Type *CoercionType = StructType::create({Int64Type, Int32Type});
     std::vector<CallInst *> CudaMallocFunctionCalls;
     for (Module::iterator F = M.begin(); F != M.end(); ++F) {
       for (Function::iterator BB = F->begin(); BB != F->end(); ++BB) {
         for (BasicBlock::iterator CurrentInstruction = BB->begin();
-             CurrentInstruction != BB->end(); ++CurrentInstruction) {
+             CurrentInstruction != BB->end(); ++CurrentInstruction) {   
           if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
             StringRef FunctionName =
                 FunctionCall->getCalledFunction()->getName();
@@ -1487,21 +1494,41 @@ struct Hello4 : public ModulePass {
                     CreatedOutputs.push_back(NewOutput);
                   }
                 }
+                errs() << *CUDA << "Bilmem ki tabiat\n";
+                CUDA->getNumArgOperands();
+                std::vector<Value *> Args1 ;
+                for (int x = 0; x < CUDA->getNumArgOperands(); x++ ){
+                  Args1.push_back(CUDA->getArgOperand(x));
+                  errs() << *CUDA->getArgOperand(x) << "\n";
+                }
+                Instruction* NewInstruction = Builder.CreateCall(ConfigureFunction, Args1);
+            Value *Condition = Builder.CreateICmpNE(NewInstruction, One32Bit);
+             NewInstruction = SplitBlockAndInsertIfThen(
+                Condition, dyn_cast<Instruction>(Condition)->getNextNode(), false);
+                Builder.SetInsertPoint(NewInstruction);
+
+                /*
                 std::pair<std::pair<std::vector<Value *>, std::vector<Value *>>,
                           std::vector<Type *>>
                     DimensionsAndType = getDimensions(PrevBB);
                 std::vector<Value *> Block = DimensionsAndType.first.first;
                 std::vector<Value *> Grid = DimensionsAndType.first.second;
                 std::vector<Type *> Types = DimensionsAndType.second;
-
                 Instruction *NewInstruction = createDimensions(
                     ConfigureFunction, Builder, Block, Grid, Types.at(1),
                     CoercionType, DimFunction, Types.at(0));
                 Builder.SetInsertPoint(NewInstruction);
+                */
+                
                 std::vector<Value *> Args = getArgs(FunctionCall, Outputs);
                 if (i != 2) {
                   Instruction *NewFunction = replicateTheFunction(
                       Builder, FunctionCall, CreatedOutputs, Args);
+                  errs() << *NewFunction << "\n";
+                  Instruction*  Inst = dyn_cast<Instruction>(
+                      NewFunction->getParent()->getNextNode()->begin());
+                  errs() << *Inst << "\n";
+
                   Builder.SetInsertPoint(dyn_cast<Instruction>(
                       NewFunction->getParent()->getNextNode()->begin()));
                   MajorityVotingArgs.push_back(CreatedOutputs);
@@ -1509,24 +1536,34 @@ struct Hello4 : public ModulePass {
                   Type *TypeOfOutput = SizeOfTheOutput.second.first;
                   Function *F = M.getFunction("majorityVoting15");
                   if (F == nullptr)
-                    F = CreateMajorityVoting(
+                    F = createMajorityVoting(
                         M, dyn_cast<PointerType>(TypeOfOutput));
-                  std::vector<Value * > Args;
-                  // errs() << *dyn_cast<Instruction>(FunctionCall->getArgOperand(0))->getOperand(0) << "\n";
-                  
-                  Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(FunctionCall->getArgOperand(1))->getOperand(0)));
-                  Args.push_back(Builder.CreateLoad(MajorityVotingArgs.at(0).at(0)));
-                  Args.push_back(Builder.CreateLoad(MajorityVotingArgs.at(1).at(0)));
-                  Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(FunctionCall->getArgOperand(1))->getOperand(0)));
+                  std::vector<Value *> Args;
+                  // errs() <<
+                  // *dyn_cast<Instruction>(FunctionCall->getArgOperand(0))->getOperand(0)
+                  // << "\n";
 
-                Type *Int32Type = Type::getInt64Ty(Context);
-                Value *Zero32Bit = ConstantInt::get(Int32Type, 15);
+                  Args.push_back(Builder.CreateLoad(
+                      dyn_cast<Instruction>(FunctionCall->getArgOperand(1))
+                          ->getOperand(0)));
+                  Args.push_back(
+                      Builder.CreateLoad(MajorityVotingArgs.at(0).at(0)));
+                  Args.push_back(
+                      Builder.CreateLoad(MajorityVotingArgs.at(1).at(0)));
+                  Args.push_back(Builder.CreateLoad(
+                      dyn_cast<Instruction>(FunctionCall->getArgOperand(1))
+                          ->getOperand(0)));
+
+                  Type *Int32Type = Type::getInt64Ty(Context);
+                  Value *Zero32Bit = ConstantInt::get(Int32Type, 15);
                   Args.push_back(Zero32Bit);
-                    Builder.CreateCall(F, Args);
+                  //Builder.CreateCall(F, Args);
                 }
               }
             } else if (FunctionName.contains("cudaMalloc")) {
               CudaMallocFunctionCalls.push_back(FunctionCall);
+            }else if(FunctionName == "cudaConfigureCall"){
+              CUDA = FunctionCall;
             }
           }
         }
