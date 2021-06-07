@@ -622,7 +622,7 @@ struct Hello2 : public ModulePass {
 
     Builder.SetInsertPoint(TailBlock);
 
-    /*
+/*    
         Builder.CreateCall(
             M.getFunction("vprintf"),
             {Builder.CreateGlobalStringPtr("CUDA'nın içindeyiz\n"),
@@ -1271,16 +1271,15 @@ struct Hello4 : public ModulePass {
 
   Instruction *replicateTheFunction(IRBuilder<> Builder, CallInst *FunctionCall,
                                     std::vector<Value *> CreatedOutputs,
-                                    std::vector<Value *> Args) {
+                                    std::vector<Value *> Args, int Z) {
     std::vector<Value *> Parameters;
-
-    for (size_t Index = 0; Index < Args.size(); Index++) {
-      Instruction *Load = Builder.CreateLoad(Args.at(Index));
-
       LLVMContext &Context =
           FunctionCall->getParent()->getParent()->getContext();
       Type *Int32Type = Type::getInt32Ty(Context);
-      Value *One32Bit = ConstantInt::get(Int32Type, 1);
+      Value *One32Bit = ConstantInt::get(Int32Type, Z);
+      Parameters.push_back(One32Bit);
+    for (size_t Index = 0; Index < Args.size(); Index++) {
+      Instruction *Load = Builder.CreateLoad(Args.at(Index));
       Parameters.push_back(Load);
     }
 
@@ -1296,7 +1295,7 @@ struct Hello4 : public ModulePass {
   std::vector<Value *> getArgs(CallInst *FunctionCall,
                                std::vector<std::string> Outputs) {
     std::vector<Value *> Args;
-    for (size_t Index = 0; Index < FunctionCall->arg_size(); Index++) {
+    for (size_t Index = 1; Index < FunctionCall->arg_size(); Index++) {
       LoadInst *ArgLoad =
           dyn_cast<LoadInst>(FunctionCall->getArgOperand(Index));
       AllocaInst *ArgAlloca = dyn_cast<AllocaInst>(ArgLoad->getOperand(0));
@@ -1453,7 +1452,7 @@ struct Hello4 : public ModulePass {
     LLVMContext &Context = M.getContext();
     Type *Int64Type = Type::getInt64Ty(Context);
     Type *Int32Type = Type::getInt32Ty(Context);
-      Value *One32Bit = ConstantInt::get(Int32Type, 1);
+      Value *Zero32Bit = ConstantInt::get(Int32Type, 1);
     Type *CoercionType = StructType::create({Int64Type, Int32Type});
     std::vector<CallInst *> CudaMallocFunctionCalls;
     for (Module::iterator F = M.begin(); F != M.end(); ++F) {
@@ -1472,7 +1471,7 @@ struct Hello4 : public ModulePass {
               IRBuilder<> Builder(FirstInstruction);
               std::pair<Value *, std::pair<Type *, Type *>> SizeOfTheOutput;
               std::vector<std::vector<Value *>> MajorityVotingArgs;
-              for (int i = 0; i < 3; i++) {
+              for (int i = 0; i < 2; i++) {
                 MDNode *RedundancyMetadata =
                     FunctionCall->getMetadata("Redundancy");
                 StringRef MetadataString =
@@ -1498,11 +1497,16 @@ struct Hello4 : public ModulePass {
                 CUDA->getNumArgOperands();
                 std::vector<Value *> Args1 ;
                 for (int x = 0; x < CUDA->getNumArgOperands(); x++ ){
-                  Args1.push_back(CUDA->getArgOperand(x));
-                  errs() << *CUDA->getArgOperand(x) << "\n";
+                  auto Arg = CUDA->getArgOperand(x);
+                  Instruction* LoadInst = dyn_cast_or_null<Instruction>(Arg);
+                  if(LoadInst != NULL){
+                    Arg = Builder.CreateLoad(LoadInst ->getOperand(0));
+
+                  }
+                  Args1.push_back(Arg);
                 }
                 Instruction* NewInstruction = Builder.CreateCall(ConfigureFunction, Args1);
-            Value *Condition = Builder.CreateICmpNE(NewInstruction, One32Bit);
+            Value *Condition = Builder.CreateICmpNE(NewInstruction, Zero32Bit);
              NewInstruction = SplitBlockAndInsertIfThen(
                 Condition, dyn_cast<Instruction>(Condition)->getNextNode(), false);
                 Builder.SetInsertPoint(NewInstruction);
@@ -1523,16 +1527,16 @@ struct Hello4 : public ModulePass {
                 std::vector<Value *> Args = getArgs(FunctionCall, Outputs);
                 if (i != 2) {
                   Instruction *NewFunction = replicateTheFunction(
-                      Builder, FunctionCall, CreatedOutputs, Args);
+                      Builder, FunctionCall, CreatedOutputs, Args, i+1);
                   errs() << *NewFunction << "\n";
                   Instruction*  Inst = dyn_cast<Instruction>(
                       NewFunction->getParent()->getNextNode()->begin());
                   errs() << *Inst << "\n";
 
-                  Builder.SetInsertPoint(dyn_cast<Instruction>(
-                      NewFunction->getParent()->getNextNode()->begin()));
+                  Builder.SetInsertPoint(dyn_cast<Instruction>(NewFunction->getParent()->getNextNode()->begin()));
                   MajorityVotingArgs.push_back(CreatedOutputs);
                 } else {
+                  /*
                   Type *TypeOfOutput = SizeOfTheOutput.second.first;
                   Function *F = M.getFunction("majorityVoting15");
                   if (F == nullptr)
@@ -1545,9 +1549,15 @@ struct Hello4 : public ModulePass {
 
                   Args.push_back(Builder.CreateLoad(
                       dyn_cast<Instruction>(FunctionCall->getArgOperand(1))
-                          ->getOperand(0)));
+                          ->getOperand(0)));*/
+
+                      /*
                   Args.push_back(
                       Builder.CreateLoad(MajorityVotingArgs.at(0).at(0)));
+                  Args.push_back(
+                      Builder.CreateLoad(MajorityVotingArgs.at(0).at(0)));
+                  Args.push_back(
+                      Builder.CreateLoad(MajorityVotingArgs.at(1).at(0)));
                   Args.push_back(
                       Builder.CreateLoad(MajorityVotingArgs.at(1).at(0)));
                   Args.push_back(Builder.CreateLoad(
@@ -1557,7 +1567,11 @@ struct Hello4 : public ModulePass {
                   Type *Int32Type = Type::getInt64Ty(Context);
                   Value *Zero32Bit = ConstantInt::get(Int32Type, 15);
                   Args.push_back(Zero32Bit);
-                  //Builder.CreateCall(F, Args);
+                  errs() << *F->getFunctionType() << "\n";
+                  for(int i = 0; i < Args.size(); i++)
+                  errs() << *Args.at(i)->getType() << "\n";
+                  Builder.CreateCall(F, Args);
+                  */
                 }
               }
             } else if (FunctionName.contains("cudaMalloc")) {
@@ -1579,7 +1593,7 @@ struct Hello4 : public ModulePass {
 char Hello::ID = -1;
 char Hello2::ID = -2;
 char Hello3::ID = -3;
-char Hello4::ID = -4;
+char Hello4   ::ID = -4;
 
 static RegisterPass<Hello> X("CUDA", "Hello World Pass", false, false);
 
