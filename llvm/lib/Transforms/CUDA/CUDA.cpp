@@ -1466,12 +1466,11 @@ struct Hello4 : public ModulePass {
               BasicBlock *CurrentBB = FunctionCall->getParent();
               BasicBlock *NextBB = CurrentBB->getNextNode();
               BasicBlock *PrevBB = CurrentBB->getPrevNode();
-              Instruction *FirstInstruction =
-                  dyn_cast<Instruction>(NextBB->begin());
+              Instruction *FirstInstruction = dyn_cast<Instruction>(NextBB->begin());
               IRBuilder<> Builder(FirstInstruction);
               std::pair<Value *, std::pair<Type *, Type *>> SizeOfTheOutput;
               std::vector<std::vector<Value *>> MajorityVotingArgs;
-              for (int i = 0; i < 2; i++) {
+              for (int i = 0; i < 3; i++) {
                 MDNode *RedundancyMetadata =
                     FunctionCall->getMetadata("Redundancy");
                 StringRef MetadataString =
@@ -1526,56 +1525,49 @@ struct Hello4 : public ModulePass {
                 
                 std::vector<Value *> Args = getArgs(FunctionCall, Outputs);
                 if (i != 2) {
+                  int XX = 0;
+                  if(i == 0)
+                  XX = 1;
+                  else
+                  XX = 0;
                   Instruction *NewFunction = replicateTheFunction(
-                      Builder, FunctionCall, CreatedOutputs, Args, i+1);
-                  errs() << *NewFunction << "\n";
+                      Builder, FunctionCall, CreatedOutputs, Args, XX );
+                      
                   Instruction*  Inst = dyn_cast<Instruction>(
                       NewFunction->getParent()->getNextNode()->begin());
-                  errs() << *Inst << "\n";
+                      
 
                   Builder.SetInsertPoint(dyn_cast<Instruction>(NewFunction->getParent()->getNextNode()->begin()));
                   MajorityVotingArgs.push_back(CreatedOutputs);
                 } else {
-                  /*
+                  
                   Type *TypeOfOutput = SizeOfTheOutput.second.first;
                   Function *F = M.getFunction("majorityVoting15");
                   if (F == nullptr)
-                    F = createMajorityVoting(
-                        M, dyn_cast<PointerType>(TypeOfOutput));
+                    F = createMajorityVoting(M, dyn_cast<PointerType>(TypeOfOutput));
                   std::vector<Value *> Args;
-                  // errs() <<
-                  // *dyn_cast<Instruction>(FunctionCall->getArgOperand(0))->getOperand(0)
-                  // << "\n";
-
-                  Args.push_back(Builder.CreateLoad(
-                      dyn_cast<Instruction>(FunctionCall->getArgOperand(1))
-                          ->getOperand(0)));*/
-
-                      /*
-                  Args.push_back(
-                      Builder.CreateLoad(MajorityVotingArgs.at(0).at(0)));
-                  Args.push_back(
-                      Builder.CreateLoad(MajorityVotingArgs.at(0).at(0)));
-                  Args.push_back(
-                      Builder.CreateLoad(MajorityVotingArgs.at(1).at(0)));
-                  Args.push_back(
-                      Builder.CreateLoad(MajorityVotingArgs.at(1).at(0)));
-                  Args.push_back(Builder.CreateLoad(
-                      dyn_cast<Instruction>(FunctionCall->getArgOperand(1))
-                          ->getOperand(0)));
+  
+                  Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(FunctionCall->getArgOperand(FunctionCall->arg_size()-1))->getOperand(0))); // A
+                  //FIX-ME!!!!
+                  Args.push_back(Builder.CreateLoad(MajorityVotingArgs.at(0).at(0))); // B
+                  Args.push_back(Builder.CreateLoad(MajorityVotingArgs.at(1).at(0))); // C
+                  Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(FunctionCall->getArgOperand(FunctionCall->arg_size()-1))->getOperand(0))); // output
 
                   Type *Int32Type = Type::getInt64Ty(Context);
                   Value *Zero32Bit = ConstantInt::get(Int32Type, 15);
-                  Args.push_back(Zero32Bit);
+                  Args.push_back( SizeOfTheOutput.first);
+                  errs() << *SizeOfTheOutput.first << "\n";
                   errs() << *F->getFunctionType() << "\n";
-                  for(int i = 0; i < Args.size(); i++)
+                  for(int i = 0; i < Args.size(); i++){
                   errs() << *Args.at(i)->getType() << "\n";
+
+                  }
                   Builder.CreateCall(F, Args);
-                  */
+                  
                 }
               }
             } else if (FunctionName.contains("cudaMalloc")) {
-              CudaMallocFunctionCalls.push_back(FunctionCall);
+              CudaMallocFunctionCalls.push_back(FunctionCall);  
             }else if(FunctionName == "cudaConfigureCall"){
               CUDA = FunctionCall;
             }
