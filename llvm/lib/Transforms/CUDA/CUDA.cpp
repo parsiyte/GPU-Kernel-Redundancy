@@ -1138,10 +1138,6 @@ struct Hello4 : public ModulePass {
     Builder.CreateStore(NullforOutputType, Allocated);
     Value *SecondReplicationCasted =
         Builder.CreateBitCast(Allocated, DestinationType->getPointerTo());
-    errs() << *Callee->getType() << "\n";
-    errs() << *SecondReplicationCasted->getType() << "\n";
-    errs() << *Size->getType() << "\n";
-    errs() << *DestinationType->getPointerTo() << "\n";
     Builder.CreateCall(Callee, {SecondReplicationCasted, Size});
     // Builder.CreateLoad(Allocated);
     return Allocated;
@@ -1202,8 +1198,6 @@ struct Hello4 : public ModulePass {
         } else if (FunctionName.contains("_ZN4dim3C2Ejjj") == true) {
           DimensionFunctions.push_back(FunctionCall);
         }
-      }else if (MemCpyInst *MemoryCopy = dyn_cast<MemCpyInst>(CurrentInstruction)){
-        errs() << *MemoryCopy << "+*+*\n";
       }
     }
     return std::make_pair(std::make_pair(Block, Grid), Types);
@@ -1448,17 +1442,21 @@ struct Hello4 : public ModulePass {
     Function *CudaMalloc = M.getFunction("cudaMalloc");
     Function *DimFunction = M.getFunction("_ZN4dim3C2Ejjj");
     Function *ConfigureFunction = M.getFunction("cudaConfigureCall");
+    FunctionCallee StreamCreateFunction = M.getFunction("cudaStreamCreate");
     CallInst *CUDA;
     LLVMContext &Context = M.getContext();
     Type *Int64Type = Type::getInt64Ty(Context);
     Type *Int32Type = Type::getInt32Ty(Context);
+    Type *Int8PtrType = Type::getInt8PtrTy(Context);
       Value *Zero32Bit = ConstantInt::get(Int32Type, 1);
     Type *CoercionType = StructType::create({Int64Type, Int32Type});
+    Type *StreamType;
     std::vector<CallInst *> CudaMallocFunctionCalls;
     for (Module::iterator F = M.begin(); F != M.end(); ++F) {
       for (Function::iterator BB = F->begin(); BB != F->end(); ++BB) {
         for (BasicBlock::iterator CurrentInstruction = BB->begin();
              CurrentInstruction != BB->end(); ++CurrentInstruction) {   
+                
           if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
             StringRef FunctionName =
                 FunctionCall->getCalledFunction()->getName();
@@ -1466,10 +1464,26 @@ struct Hello4 : public ModulePass {
               BasicBlock *CurrentBB = FunctionCall->getParent();
               BasicBlock *NextBB = CurrentBB->getNextNode();
               BasicBlock *PrevBB = CurrentBB->getPrevNode();
-              Instruction *FirstInstruction = dyn_cast<Instruction>(NextBB->begin());
+              Instruction *FirstInstruction = dyn_cast<Instruction>(PrevBB->begin());
               IRBuilder<> Builder(FirstInstruction);
               std::pair<Value *, std::pair<Type *, Type *>> SizeOfTheOutput;
               std::vector<std::vector<Value *>> MajorityVotingArgs;
+             Value *One32Bit = ConstantInt::get(Int32Type, 3);
+             ArrayType* arrayType = ArrayType::get(StreamType, 3);
+             Value* StreamArray =  Builder.CreateAlloca(arrayType,nullptr, "streams");
+             FirstInstruction = dyn_cast<Instruction>(NextBB->begin());
+             
+              Value* StreamIndex = ConstantInt::get(Int64Type,0);
+              Value* SecondStreamIndex = ConstantInt::get(Int64Type, 2);
+              Value* iThStream = Builder.CreateInBoundsGEP(StreamArray,{StreamIndex, SecondStreamIndex});       
+                 StreamCreateFunction = (M.getOrInsertFunction("cudaStreamCreate",Type::getInt32Ty(Context),iThStream->getType()));        
+               Builder.CreateCall(StreamCreateFunction, {iThStream});
+              Value* LoadedStream = Builder.CreateLoad(iThStream);
+              errs()<< *CUDA << "\n";
+              CUDA->setArgOperand(5, LoadedStream);
+              errs()<< *CUDA << "\n";
+             Builder.SetInsertPoint(FirstInstruction);
+             errs() << "Burada\n";
               for (int i = 0; i < 3; i++) {
                 MDNode *RedundancyMetadata =
                     FunctionCall->getMetadata("Redundancy");
@@ -1492,18 +1506,29 @@ struct Hello4 : public ModulePass {
                     CreatedOutputs.push_back(NewOutput);
                   }
                 }
-                errs() << *CUDA << "Bilmem ki tabiat\n";
-                CUDA->getNumArgOperands();
+                Value* LoadedStream;
+                int ArgSize = CUDA->getNumArgOperands();
+                if(i < 2){
+                Value* StreamIndex = ConstantInt::get(Int64Type, i+1);
+                Value* SecondStreamIndex = ConstantInt::get(Int64Type, 2);
+               Value* iThStream = Builder.CreateInBoundsGEP(StreamArray,{StreamIndex, SecondStreamIndex});
+               
+                Builder.CreateCall(StreamCreateFunction, {iThStream});
+                LoadedStream = Builder.CreateLoad(iThStream);
+                ArgSize--;
+              
+                }
                 std::vector<Value *> Args1 ;
-                for (int x = 0; x < CUDA->getNumArgOperands(); x++ ){
+
+                for (int x = 0; x < ArgSize; x++ ){
                   auto Arg = CUDA->getArgOperand(x);
                   Instruction* LoadInst = dyn_cast_or_null<Instruction>(Arg);
-                  if(LoadInst != NULL){
-                    Arg = Builder.CreateLoad(LoadInst ->getOperand(0));
-
-                  }
+                  if(LoadInst != NULL) Arg = Builder.CreateLoad(LoadInst ->getOperand(0));
                   Args1.push_back(Arg);
                 }
+                if(ArgSize != CUDA->getNumArgOperands())
+                  Args1.push_back(LoadedStream);
+
                 Instruction* NewInstruction = Builder.CreateCall(ConfigureFunction, Args1);
             Value *Condition = Builder.CreateICmpNE(NewInstruction, Zero32Bit);
              NewInstruction = SplitBlockAndInsertIfThen(
@@ -1556,12 +1581,6 @@ struct Hello4 : public ModulePass {
                   Type *Int32Type = Type::getInt64Ty(Context);
                   Value *Zero32Bit = ConstantInt::get(Int32Type, 15);
                   Args.push_back( SizeOfTheOutput.first);
-                  errs() << *SizeOfTheOutput.first << "\n";
-                  errs() << *F->getFunctionType() << "\n";
-                  for(int i = 0; i < Args.size(); i++){
-                  errs() << *Args.at(i)->getType() << "\n";
-
-                  }
                   Builder.CreateCall(F, Args);
                   
                 }
@@ -1570,6 +1589,7 @@ struct Hello4 : public ModulePass {
               CudaMallocFunctionCalls.push_back(FunctionCall);  
             }else if(FunctionName == "cudaConfigureCall"){
               CUDA = FunctionCall;
+              StreamType = FunctionCall->getArgOperand(5)->getType();
             }
           }
         }
