@@ -85,7 +85,20 @@ struct RMTDevice : public ModulePass {
       }
       return LastStoreInst;
   }
-
+  StoreInst* getTheSecondLastStore(Function* Kernel){
+    StoreInst *LastSecondStoreInst;
+    StoreInst *LastStoreInst;
+      for (Function::iterator BB = Kernel->begin(); BB != Kernel->end(); ++BB) {
+        for (BasicBlock::iterator CurrentInstruction = BB->begin();CurrentInstruction != BB->end(); ++CurrentInstruction) {   
+          if ( StoreInst *Store = dyn_cast<StoreInst>(CurrentInstruction)) {
+            LastSecondStoreInst = LastStoreInst;
+           LastStoreInst = Store;
+          
+          } 
+      }
+      }
+      return LastSecondStoreInst;
+  }
   Function* createMajorityFuncton(Module &M, FunctionCallee MajorityVotingCallee){
 
 
@@ -235,6 +248,7 @@ struct RMTDevice : public ModulePass {
   }
 
   bool runOnModule(Module &M) override {
+    
      NamedMDNode *Annotations = M.getNamedMetadata("nvvm.annotations");
      LLVMContext& Context = M.getContext();
      Type* FloatPointerType = Type::getFloatPtrTy(Context);
@@ -255,6 +269,10 @@ struct RMTDevice : public ModulePass {
         Metadata* FunctionMetadata = cast<Metadata>(Operand->getOperand(0));
         ValueAsMetadata* AsValue = cast<ValueAsMetadata>(FunctionMetadata);
         Function* Kernel =  dyn_cast<Function>(AsValue->getValue());
+        errs() << Kernel->getName() << "\n";
+        if(Kernel->getName().contains("Revisited") || Kernel->getName().contains("majorityVoting15")){
+          continue;
+        }
         FunctionType* KernelType = Kernel->getFunctionType();
         unsigned int ParamSize = KernelType->getNumParams();
         Type* OutputType = KernelType->getParamType(ParamSize-1); // Son Parametrenin Output olduğu kabulü
@@ -348,18 +366,26 @@ struct RMTDevice : public ModulePass {
             {Builder.CreateGlobalStringPtr("%d \n"),
              Builder.CreateBitCast(printFAlloca, Int8ptrType)
              });*/
+             
         Value* ThreadIDX = XID->getPointerOperand();
         Value* Urem = Builder.CreateURem(
             Builder.CreateLoad(XID->getPointerOperand()), 
             Builder.CreateLoad(OriginalXAddr)
         );
-        Builder.CreateStore(Urem, ThreadIDX );
+        
+        errs() << *Builder.CreateStore(Urem, ThreadIDX ) << "\n";
 
         StoreInst* LastStore = getTheLastStore(NewKernelFunction);
         Value* CalculatedValue = LastStore->getValueOperand();
-        GetElementPtrInst* Index = dyn_cast<GetElementPtrInst>(LastStore->getPointerOperand());
+        GetElementPtrInst* Index = dyn_cast_or_null<GetElementPtrInst>(LastStore->getPointerOperand());
+        if(Index == nullptr){
+          LastStore = getTheSecondLastStore(NewKernelFunction);
+          CalculatedValue = LastStore->getValueOperand();
+          Index = dyn_cast_or_null<GetElementPtrInst>(LastStore->getPointerOperand());
+        }
         Value* Pointer = dyn_cast<Value>(Index->idx_begin());
-        errs() << *Pointer<< "\n";
+        errs() << *Pointer<< "Pointer\n";
+        errs() << *Index<< "Index\n";
 
         Builder.SetInsertPoint(LastStore);
         Instruction* IsOriginal = dyn_cast<Instruction>(Builder.CreateICmpEQ(ResultA, Zero32Bit));
@@ -372,8 +398,11 @@ struct RMTDevice : public ModulePass {
         Builder.SetInsertPoint(dyn_cast<Instruction>(Branch));
         Value* LoadedDA1Addr = Builder.CreateLoad(DA1Addr);
         Value* DA1Location = Builder.CreateInBoundsGEP(LoadedDA1Addr,{Pointer});
+        errs() << *DA1Location << "\n";
         Builder.CreateStore(CalculatedValue, DA1Location);
 
+
+        errs() << *Branch << "\n";
         Builder.SetInsertPoint(dyn_cast<Instruction>(Branch->getParent()->getNextNode()->begin()));
         Instruction* IsSecondOne = dyn_cast<Instruction>(Builder.CreateICmpEQ(ResultA, Two32Bit));
         Branch = SplitBlockAndInsertIfThen(IsSecondOne, IsSecondOne->getNextNode(), false);
@@ -389,7 +418,6 @@ struct RMTDevice : public ModulePass {
 
       Annotations->addOperand(MDNode::concatenate(
           MDNode::get(Context, ValueAsMetadata::get(NewKernelFunction)), Con));
-        errs() << *NewKernelFunction << "\n";
 
 
       FunctionCallee MajorityVotingCallee = M.getOrInsertFunction(
@@ -400,9 +428,9 @@ struct RMTDevice : public ModulePass {
 
       );
       createMajorityFuncton(M,MajorityVotingCallee );
-      break;
         }
      }
+     
     return false;
   }
 
@@ -506,7 +534,7 @@ struct RMTHost : public ModulePass {
     return Allocated;
   }
 
-    Function *createRevisted(Module &M,std::string FunctionName,FunctionCallee RevistedFunctionCallee) {
+  Function *createRevisted(Module &M,std::string FunctionName,FunctionCallee RevistedFunctionCallee) {
     // std::to_string(RevistedPointerType->getTypeID());
 
     Function *CudaRegisterFunction = M.getFunction("__cuda_register_globals");
@@ -552,16 +580,23 @@ struct RMTHost : public ModulePass {
     while(Args != RevistedFunction->arg_end()){
       Value* Arguman = Args++;
       Type* ArgumanType = Arguman->getType();
-      Value* ArgumanPointer = Builder.CreateAlloca(ArgumanType, nullptr, "Arguman.addr");
-      Builder.CreateStore(Arguman, ArgumanPointer);
-      Parameters.push_back(ArgumanPointer);
-      Value *BitcastParameter = Builder.CreateBitCast(ArgumanPointer, Int8PtrType);
-      Value *OffsetValue = ConstantInt::get(Int64Type, Offset);
-      if (ArgumanType== Int32PtrType)
+      if (ArgumanType == Int32PtrType || ArgumanType == Int32Type)
         SizeParameter = 4;
       else
         SizeParameter = 8; // Diğerleri pointer olduğu için herhalde. Char*,
                            // float*, int* aynı çıktı.
+      MaybeAlign ArgumanAlign = MaybeAlign(SizeParameter);
+      AllocaInst* ArgumanPointer = Builder.CreateAlloca(ArgumanType, nullptr, "Arguman.addr");
+      ArgumanPointer->setAlignment(ArgumanAlign);
+      Builder.CreateStore(Arguman, ArgumanPointer);
+      Parameters.push_back(ArgumanPointer);
+      Value *BitcastParameter = Builder.CreateBitCast(ArgumanPointer, Int8PtrType);
+      while(Offset%SizeParameter != 0)
+        Offset += 1;
+      Value *OffsetValue = ConstantInt::get(Int64Type, Offset);
+      errs() << *ArgumanType << "\n";
+        errs() << SizeParameter << "\n";
+
        Value *SizeValue = ConstantInt::get(Int64Type, SizeParameter);
       Value *CudaSetupArgumentCall = Builder.CreateCall(
           CudaSetupArgument, {BitcastParameter, SizeValue, OffsetValue});
@@ -582,7 +617,7 @@ struct RMTHost : public ModulePass {
 
     Builder.CreateCall(CudaLaunch, {Builder.CreateBitCast(
                                        RevistedFunction, Int8PtrType)});
-    errs() << *RevistedFunction << "\n";
+
     BasicBlock *CudaRegisterBlock =
         dyn_cast<BasicBlock>(CudaRegisterFunction->begin());
     Instruction *FirstInstruction =
@@ -754,16 +789,19 @@ struct RMTHost : public ModulePass {
     Type* VoidType = Type::getVoidTy(Context);
     std::vector<CallInst *> CudaMallocFunctionCalls;
       Value *One32Bit = ConstantInt::get(Int32Type, 1);
+      Value *Zero32Bit = ConstantInt::get(Int32Type, 0);
 
     Function *ConfigureFunction = M.getFunction("cudaConfigureCall");
     
-                      std::vector<Value *> CreatedOutputs; // GERI TAŞI
+    std::vector<Value *> CreatedOutputs; // GERI TAŞI
     for (Module::iterator F = M.begin(); F != M.end(); ++F) {
       for (Function::iterator BB = F->begin(); BB != F->end(); ++BB) {
         for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {  
           if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
                StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
                 if(isReplicate(FunctionCall)){
+                  
+                   CreatedOutputs.clear();
                     FunctionType* KernelType = FunctionCall->getFunctionType();
                     unsigned int ParamSize = KernelType->getNumParams();
                     Type* OutputType = KernelType->getParamType(ParamSize-1); // Son Parametrenin Output olduğu kabulü
@@ -793,7 +831,8 @@ struct RMTHost : public ModulePass {
                       std::vector<std::string> Outputs = InputsAndOutputs.second;
                         Builder.SetInsertPoint(FunctionCall);
                         for(int i = 0; i < FunctionCall->getNumArgOperands(); i++){
-                          CreatedOutputs.push_back(FunctionCall->getArgOperand(i));
+                          LoadInst* LoadedArg =  dyn_cast<LoadInst>(FunctionCall->getArgOperand(i));
+                          CreatedOutputs.push_back(LoadedArg);
                         }
                     Builder.SetInsertPoint(Cuda->getPrevNode());
                     for(int i = 0; i < 2; i++)
@@ -805,11 +844,20 @@ struct RMTHost : public ModulePass {
                         CudaMalloc, VariableName, SizeOfTheOutput.first,
                         Builder, SizeOfTheOutput.second.first,
                         SizeOfTheOutput.second.second);
-                    CreatedOutputs.push_back(Builder.CreateLoad(NewOutput));
+                     CreatedOutputs.push_back(NewOutput);
                      } 
-                    CreatedOutputs.push_back(ConstantInt::get(Int32Type, 20));
-                    CreatedOutputs.push_back(ConstantInt::get(Int32Type, 0));
+                    // FIX ME!!!!!!!
+                    CreatedOutputs.push_back(ConstantInt::get(Int32Type, 256));
+                    CreatedOutputs.push_back(ConstantInt::get(Int32Type, 1  ));
                      
+                    for(int I =  CreatedOutputs.size() - 4; I < CreatedOutputs.size() - 2 ; I++){
+                      errs() <<  *CreatedOutputs.at(I) << "\n";
+                      CreatedOutputs.at(I) = Builder.CreateLoad(CreatedOutputs.at(I));
+                    }
+                    //  errs() << *F << "\n";
+
+
+
                     Builder.SetInsertPoint(FunctionCall);
                    Instruction* NewFunctionCall = Builder.CreateCall(NewKernelAsCallee, CreatedOutputs);
                    /*
@@ -818,6 +866,7 @@ struct RMTHost : public ModulePass {
                     errs() << *CreatedOutputs.at(3) << "\n";
                     errs() << *M.getFunction("_Z6kernelPfS_S_") << "\n";
                     Builder.CreateCall(M.getFunction("_Z6kernelPfS_S_"), {FunctionCall->getArgOperand(ParamSize-1), CreatedOutputs.at(2) , CreatedOutputs.at(3)});*/
+                  
                    CurrentInstruction++;
                    FunctionCall->eraseFromParent();
                    //errs() << *CurrentInstruction << "\n";
@@ -831,7 +880,6 @@ struct RMTHost : public ModulePass {
 
 
                     Builder.SetInsertPoint(FirstInstruction);
-                    errs() << "Burada\n";
                     int ArgSize = Cuda->getNumArgOperands();
 
                     std::vector<Value *> Args1 ;
@@ -841,7 +889,6 @@ struct RMTHost : public ModulePass {
                     Args1.push_back(Args);
                     }
                     Instruction* NewInstruction = Builder.CreateCall(ConfigureFunction, Args1);
-                    errs() << *NewInstruction << "\n";
                     Value *Condition = Builder.CreateICmpNE(NewInstruction, One32Bit);
                     NewInstruction = SplitBlockAndInsertIfThen(
                     Condition, dyn_cast<Instruction>(Condition)->getNextNode(), false);
@@ -850,34 +897,40 @@ struct RMTHost : public ModulePass {
 
 
 
-
+                  
                     Type *TypeOfOutput = SizeOfTheOutput.second.first;
                     Function *Majority = M.getFunction("majorityVoting15");
                     if (Majority == nullptr)
                     Majority = createMajorityVoting(M, dyn_cast<PointerType>(TypeOfOutput));
                     std::vector<Value *> Args;
+                    for(int i =0; i < CreatedOutputs.size(); i++)
+                       errs() << *CreatedOutputs.at(i) << "+*+*\n";
 
-                    Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(FunctionCall->getArgOperand(FunctionCall->arg_size()-1))->getOperand(0))); // A
-                    //FIX-ME!!!!
-                    errs() << *CreatedOutputs.at(2) << "*\n";
-                    errs() << *CreatedOutputs.at(3) << "*\n";
-                    Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(2))->getOperand(0)));
-                    Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(3))->getOperand(0)));
-                    Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(FunctionCall->getArgOperand(FunctionCall->arg_size()-1))->getOperand(0))); // output
+                    errs() << *CreatedOutputs.at(CreatedOutputs.size() - 3)  << "\n";
+                    errs() << *CreatedOutputs.at(CreatedOutputs.size() - 4)  << "\n";
+                    errs() << *dyn_cast<CallInst>(NewFunctionCall)->getArgOperand(ParamSize-1) << "\n";
 
-                    Type *Int32Type = Type::getInt64Ty(Context);
-                    Value *Zero32Bit = ConstantInt::get(Int32Type, 15);
+                    Args.push_back(
+                      Builder.CreateLoad(
+                        dyn_cast<Instruction>(dyn_cast<CallInst>(NewFunctionCall)->getArgOperand(ParamSize-1))->getOperand(0)
+                        
+                        )); // A
+                    Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 4))->getOperand(0)));
+                    Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 3))->getOperand(0)));    
+                    Args.push_back(
+                      Builder.CreateLoad(
+                        dyn_cast<Instruction>(dyn_cast<CallInst>(NewFunctionCall)->getArgOperand(ParamSize-1))->getOperand(0)
+                        
+                        )); // A
                     Args.push_back( SizeOfTheOutput.first);
-                    errs() << *F->getFunctionType() << "\n";
-                    errs() << *Args.at(0) << "\n";
-                    errs() << *Args.at(1) << "\n";
-                    errs() << *Args.at(2) << "\n";
-                    errs() << *Args.at(3) << "\n";
-                    errs() << *Args.at(4) << "\n";
+
+                   
                     Builder.CreateCall(Majority, Args);
-                    errs() <<  * F << "\n";
+                    
                   //Builder.CreateCall(F, Args);
                   
+                CurrentInstruction++;
+                CurrentInstruction++;
                 
             }else if (FunctionName == "cudaConfigureCall") {
               Cuda = FunctionCall;
@@ -887,6 +940,11 @@ struct RMTHost : public ModulePass {
               IRBuilder<> Builder(BlockLoadInstr->getNextNode());
               Value* Mul = Builder.CreateMul(BlockLoadInstr, (ConstantInt::get(Int32Type, 3)));
               Cuda->setArgOperand(1, Mul);
+              /*
+              ICmpInst* CallConfig = dyn_cast_or_null<ICmpInst>(Cuda->getNextNode());
+              errs() << *CallConfig->getOperand(1) << "///\n";
+              CallConfig->setOperand(1, One32Bit);
+*/
             }else if (FunctionName.contains("cudaMalloc")) {
               CudaMallocFunctionCalls.push_back(FunctionCall);  
           }
