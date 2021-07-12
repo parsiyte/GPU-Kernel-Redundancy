@@ -328,8 +328,8 @@ struct RMTDevice : public ModulePass {
         Value* ResultA = Builder.CreateUDiv(
             Builder.CreateLoad(XID->getPointerOperand()),
             Builder.CreateLoad(OriginalXAddr)
-         );/*
-    Function *a;
+         );
+            Function *a;
     Value *b;
     Value *c;
     Type *d;
@@ -356,16 +356,16 @@ struct RMTDevice : public ModulePass {
         }
       }
     }
-        Builder.CreateStore(ResultA, IntA);
+      auto yy =  Builder.CreateStore(ResultA, IntA);
     AllocaInst *printFAlloca = Builder.CreateAlloca(d->getScalarType());
      auto XX =  Builder.CreateInBoundsGEP(printFAlloca, {ConstantInt::get(Type::getInt32Ty(Context),0),ConstantInt::get(Type::getInt32Ty(Context),0)});
-     Builder.CreateStore( Builder.CreateLoad(XID->getPointerOperand()), XX);
+     Builder.CreateStore( Builder.CreateLoad(yy->getPointerOperand()), XX);
 
         Builder.CreateCall(
             M.getFunction("vprintf"),
             {Builder.CreateGlobalStringPtr("%d \n"),
              Builder.CreateBitCast(printFAlloca, Int8ptrType)
-             });*/
+             });
              
         Value* ThreadIDX = XID->getPointerOperand();
         Value* Urem = Builder.CreateURem(
@@ -847,7 +847,7 @@ struct RMTHost : public ModulePass {
                      CreatedOutputs.push_back(NewOutput);
                      } 
                     // FIX ME!!!!!!!
-                    CreatedOutputs.push_back(ConstantInt::get(Int32Type, 256));
+                    CreatedOutputs.push_back(ConstantInt::get(Int32Type, 32));
                     CreatedOutputs.push_back(ConstantInt::get(Int32Type, 1  ));
                      
                     for(int I =  CreatedOutputs.size() - 4; I < CreatedOutputs.size() - 2 ; I++){
@@ -934,12 +934,12 @@ struct RMTHost : public ModulePass {
                 
             }else if (FunctionName == "cudaConfigureCall") {
               Cuda = FunctionCall;
-              LoadInst* BlockLoadInstr = dyn_cast_or_null<LoadInst>(Cuda->getArgOperand(1));
+              LoadInst* BlockLoadInstr = dyn_cast_or_null<LoadInst>(Cuda->getArgOperand(0));
               if(BlockLoadInstr == nullptr)
                 continue;
               IRBuilder<> Builder(BlockLoadInstr->getNextNode());
-              Value* Mul = Builder.CreateMul(BlockLoadInstr, (ConstantInt::get(Int32Type, 3)));
-              Cuda->setArgOperand(1, Mul);
+              Value* Mul = Builder.CreateMul(BlockLoadInstr, (ConstantInt::get(Int64Type, 3)));
+              Cuda->setArgOperand(0, Mul);
               /*
               ICmpInst* CallConfig = dyn_cast_or_null<ICmpInst>(Cuda->getNextNode());
               errs() << *CallConfig->getOperand(1) << "///\n";
