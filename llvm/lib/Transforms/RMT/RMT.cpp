@@ -395,64 +395,70 @@ struct RMTDevice : public ModulePass {
         };
 
 
-        LoadInst* First =  dyn_cast<LoadInst>(CalculatedValue->getOperand(0));
-        GetElementPtrInst* FirstGep =  dyn_cast<GetElementPtrInst>(First->getOperand(0));
-        LoadInst* FirstArray =  dyn_cast<LoadInst>(FirstGep->getOperand(0));
-        Instruction* FirstArrayIndex =  dyn_cast<Instruction>(FirstGep->getOperand(1));
+        LoadInst* First =  dyn_cast_or_null<LoadInst>(CalculatedValue->getOperand(0));
+        if(First != nullptr){
+        GetElementPtrInst* FirstGep =  dyn_cast_or_null<GetElementPtrInst>(First->getOperand(0));
+          LoadInst* FirstArray =  dyn_cast<LoadInst>(FirstGep->getOperand(0));
+          Instruction* FirstArrayIndex =  dyn_cast<Instruction>(FirstGep->getOperand(1));
 
 
-        Instruction* Second =  dyn_cast<Instruction>(CalculatedValue->getOperand(1));
-        Builder.SetInsertPoint(Second->getNextNode());
-        Instruction* CMPZero = dyn_cast<Instruction>(Builder.CreateICmpEQ(Builder.CreateLoad(IntA), Zero32Bit));
-      
-
-         Instruction* NewBranch =  SplitBlockAndInsertIfThen(CMPZero, CMPZero->getNextNode(),false);
-         BranchInst* Branch = dyn_cast<BranchInst>(CMPZero->getNextNode());
-         Branch->swapSuccessors();
-         BasicBlock* NewBB =   NewBranch->getParent();
-         errs() << *NewBB << "\n";
-         NewBB->moveAfter(NewBB->getNextNode());
-         
-         Builder.SetInsertPoint(dyn_cast<Instruction>(NewBB->begin()));
-         Instruction* CMPOne = dyn_cast<Instruction>(Builder.CreateICmpEQ( Builder.CreateLoad(IntA), One32Bit));
-       
-         NewBranch =  SplitBlockAndInsertIfThen(CMPOne, CMPOne->getNextNode(),false);
-         Builder.SetInsertPoint(NewBranch);
-
-         Instruction* DA1Loaded = Builder.CreateLoad(DA1Addr);
-         Instruction* ThreadIDXLoaded = Builder.CreateLoad(ThreadIDX);
-         Value* ThreadIDXExtened = Builder.CreateSExt(ThreadIDXLoaded, Int64Type);
-         Value* NthElement = Builder.CreateInBoundsGEP(DA1Loaded,{ThreadIDXExtened} );
+          Instruction* Second =  dyn_cast<Instruction>(CalculatedValue->getOperand(1));
+          Builder.SetInsertPoint(Second->getNextNode());
+          Instruction* CMPZero = dyn_cast<Instruction>(Builder.CreateICmpEQ(Builder.CreateLoad(IntA), Zero32Bit));
         
-          BinaryOperator* Fadd = dyn_cast<BinaryOperator>(Builder.CreateFAdd(Builder.CreateLoad(NthElement), Second));
-          FastMathFlags FMF;
-          FMF.setAllowContract();
-          Fadd->setFastMathFlags(FMF);
 
-          Builder.CreateStore(Fadd, NthElement);
-          errs() << *NewBranch << "\n";
-          BasicBlock* Idle = NewBranch->getParent()->getNextNode();
-          BasicBlock* ForInc = Idle->getNextNode();
-          NewBranch->setSuccessor(0, ForInc);
+          Instruction* NewBranch =  SplitBlockAndInsertIfThen(CMPZero, CMPZero->getNextNode(),false);
+          BranchInst* Branch = dyn_cast<BranchInst>(CMPZero->getNextNode());
+          Branch->swapSuccessors();
+          BasicBlock* NewBB =   NewBranch->getParent();
+          errs() << *NewBB << "\n";
+          NewBB->moveAfter(NewBB->getNextNode());
+          
+          Builder.SetInsertPoint(dyn_cast<Instruction>(NewBB->begin()));
+          Instruction* CMPOne = dyn_cast<Instruction>(Builder.CreateICmpEQ( Builder.CreateLoad(IntA), One32Bit));
         
-          BranchInst* IdleBranch = dyn_cast<BranchInst>(Idle->begin());
-          IdleBranch->setSuccessor(0,ForInc);
-
-         Builder.SetInsertPoint(dyn_cast<Instruction>(IdleBranch));
-         Instruction* CMPTwo = dyn_cast<Instruction>(Builder.CreateICmpEQ( Builder.CreateLoad(IntA), Two32Bit));
-         NewBranch =  SplitBlockAndInsertIfThen(CMPTwo, CMPTwo->getNextNode(),false);
+          NewBranch =  SplitBlockAndInsertIfThen(CMPOne, CMPOne->getNextNode(),false);
           Builder.SetInsertPoint(NewBranch);
 
-          Instruction* DA2Loaded = Builder.CreateLoad(DA2Addr);
-         ThreadIDXLoaded = Builder.CreateLoad(ThreadIDX);
-         ThreadIDXExtened = Builder.CreateSExt(ThreadIDXLoaded, Int64Type);
-         NthElement = Builder.CreateInBoundsGEP(DA2Loaded,{ThreadIDXExtened} );
-        
-          Fadd = dyn_cast<BinaryOperator>(Builder.CreateFAdd(Builder.CreateLoad(NthElement), Second));
-          Fadd->setFastMathFlags(FMF);
+          Instruction* DA1Loaded = Builder.CreateLoad(DA1Addr);
+          Instruction* ThreadIDXLoaded = Builder.CreateLoad(ThreadIDX);
+          Value* ThreadIDXExtened = Builder.CreateSExt(ThreadIDXLoaded, Int64Type);
+          Value* NthElement = Builder.CreateInBoundsGEP(DA1Loaded,{ThreadIDXExtened} );
+          
+            BinaryOperator* Fadd = dyn_cast<BinaryOperator>(Builder.CreateFAdd(Builder.CreateLoad(NthElement), Second));
+            FastMathFlags FMF;
+            FMF.setAllowContract();
+            Fadd->setFastMathFlags(FMF);
 
-          Builder.CreateStore(Fadd, NthElement);
-          errs() << *NewKernelFunction << "\n";
+            Builder.CreateStore(Fadd, NthElement);
+            errs() << *NewBranch << "\n";
+            BasicBlock* Idle = NewBranch->getParent()->getNextNode();
+            BasicBlock* ForInc = Idle->getNextNode();
+            NewBranch->setSuccessor(0, ForInc);
+          
+            BranchInst* IdleBranch = dyn_cast<BranchInst>(Idle->begin());
+            IdleBranch->setSuccessor(0,ForInc);
+
+          Builder.SetInsertPoint(dyn_cast<Instruction>(IdleBranch));
+          Instruction* CMPTwo = dyn_cast<Instruction>(Builder.CreateICmpEQ( Builder.CreateLoad(IntA), Two32Bit));
+          NewBranch =  SplitBlockAndInsertIfThen(CMPTwo, CMPTwo->getNextNode(),false);
+            Builder.SetInsertPoint(NewBranch);
+
+            Instruction* DA2Loaded = Builder.CreateLoad(DA2Addr);
+          ThreadIDXLoaded = Builder.CreateLoad(ThreadIDX);
+          ThreadIDXExtened = Builder.CreateSExt(ThreadIDXLoaded, Int64Type);
+          NthElement = Builder.CreateInBoundsGEP(DA2Loaded,{ThreadIDXExtened} );
+          
+            Fadd = dyn_cast<BinaryOperator>(Builder.CreateFAdd(Builder.CreateLoad(NthElement), Second));
+            Fadd->setFastMathFlags(FMF);
+
+            Builder.CreateStore(Fadd, NthElement);
+          }else{
+            //LoadInst* First =  dyn_cast_or_null<LoadInst>();
+            errs() << *CalculatedValue << "\n";
+            errs() << *CalculatedValue->getOperand(0) << "\n";
+          }
+          // errs() << *NewKernelFunction << "\n";
         
   /*
            
@@ -596,7 +602,7 @@ struct RMTDevice : public ModulePass {
 
 */
         /*
-        Value* Pointer = dyn_cast<Value>(Index->idx_begin());
+        Val.ue* Pointer = dyn_cast<Value>(Index->idx_begin());
         errs() << *Pointer<< "Pointer\n";
         errs() << *Index<< "Index\n";
 
@@ -625,7 +631,7 @@ struct RMTDevice : public ModulePass {
         Builder.CreateStore(CalculatedValue, DA2Location);
 <
 
-
+*/
 
       FunctionCallee MajorityVotingCallee = M.getOrInsertFunction(
           "majorityVoting15", Type::getVoidTy(Context),
@@ -635,7 +641,7 @@ struct RMTDevice : public ModulePass {
 
       );
       createMajorityFuncton(M,MajorityVotingCallee );
-      */
+      
         }
      }
      
@@ -646,13 +652,20 @@ struct RMTDevice : public ModulePass {
 
 struct RMTHost : public ModulePass {
   static char ID;
+
+  struct CudaConfigurations{
+    Value* OriginalX;
+    Value* OriginalY;
+    CallInst* ConfigCall;
+
+  };
   RMTHost() : ModulePass(ID) {}
 
    bool isReplicate(CallInst *FunctionCall) {
     return FunctionCall->hasMetadata("Redundancy");
   }
 
-    StringRef getMetadataString(MDNode *RedundancyMetadata) {
+  StringRef getMetadataString(MDNode *RedundancyMetadata) {
     return cast<MDString>(RedundancyMetadata->getOperand(0))->getString();
   }
 
@@ -764,19 +777,7 @@ struct RMTHost : public ModulePass {
         dyn_cast<Function>(RevistedFunctionCallee.getCallee());
     RevistedFunction->setCallingConv(CallingConv::C);
     Function::arg_iterator Args = RevistedFunction->arg_begin();
-    /*
-    Value *OriginalY = Args--;
-    OriginalY->setName("OriginalY");
 
-    Value *OriginalX = Args--;
-    OriginalX->setName("OriginalX");
-
-    Value *DeviceA2 = Args--;
-    DeviceA2->setName("DeviceA2");
-
-    Value *DeviceA1 = Args--;
-    DeviceA1->setName("DeviceA1");
-*/
      BasicBlock *EntryBlock =
         BasicBlock::Create(Context, "entry", RevistedFunction);
 
@@ -802,8 +803,6 @@ struct RMTHost : public ModulePass {
       while(Offset%SizeParameter != 0)
         Offset += 1;
       Value *OffsetValue = ConstantInt::get(Int64Type, Offset);
-      errs() << *ArgumanType << "\n";
-        errs() << SizeParameter << "\n";
 
        Value *SizeValue = ConstantInt::get(Int64Type, SizeParameter);
       Value *CudaSetupArgumentCall = Builder.CreateCall(
@@ -844,10 +843,7 @@ struct RMTHost : public ModulePass {
          ConstantPointerNull::get(Int8PtrType),
          ConstantPointerNull::get(Int8PtrType),
          ConstantPointerNull::get(Int32PtrType)});
-    /*
 
-
-         */
     return RevistedFunction;
   }
 
@@ -987,9 +983,149 @@ struct RMTHost : public ModulePass {
     return MajorityVotingFunction;
   }
 
+
+Value* findThreadX(BasicBlock* BB){
+
+      Function* MainFunction = BB->getParent();
+      Type* Int32Type = Type::getInt32Ty(BB->getContext());
+        for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {  
+          if(CallInst* FunctionCall = dyn_cast<CallInst>(CurrentInstruction) ){
+               StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
+               if(FunctionName == "cudaConfigureCall"){
+                LoadInst* GridLoadInstr = dyn_cast_or_null<LoadInst>(FunctionCall->getArgOperand(2)); // 0 Grid X oluyor
+
+                GetElementPtrInst* GEPS =  dyn_cast_or_null<GetElementPtrInst>(GridLoadInstr->getPointerOperand()); // Grid {i64, i32} şekilde bir struct. 
+                AllocaInst* GridAlloca = dyn_cast_or_null<AllocaInst>(GEPS->getPointerOperand()); // Grid'in alloca instruction'ı
+                for (Use& U : GridAlloca->uses()) {
+                  User* User = U.getUser();
+                  BitCastInst* Casted = dyn_cast_or_null<BitCastInst>(User);
+                  if(Casted != nullptr){
+                    Instruction* TmpInstruction = Casted;
+                    MemCpyInst* GridMemoryCopy = nullptr; 
+                    while(GridMemoryCopy == nullptr){
+                      TmpInstruction = TmpInstruction->getNextNode();
+                      GridMemoryCopy = dyn_cast_or_null<MemCpyInst>(TmpInstruction);
+                    }
+                    BitCastInst* CopySrc = dyn_cast_or_null<BitCastInst>(GridMemoryCopy->getArgOperand(1));
+                    AllocaInst* GridTotalAllocation  = dyn_cast_or_null<AllocaInst>(CopySrc->getOperand(0));
+                    errs() << *GridTotalAllocation << "\n";
+                    bool Found = false;
+                    for(Function::iterator BasicB = MainFunction->begin();  BasicB != MainFunction->end(); BasicB++)
+                      for (BasicBlock::iterator CurrentInstruction2 = BasicB->begin(); CurrentInstruction2 != BasicB->end(); ++CurrentInstruction2) {  
+                          if( MemCpyInst* TempMemCpy =  dyn_cast<MemCpyInst>(CurrentInstruction2 )){
+                            BitCastInst* PossibleGridX = dyn_cast_or_null<BitCastInst>(TempMemCpy->getArgOperand(0));
+                            AllocaInst* PossibleGridAllocation  = dyn_cast_or_null<AllocaInst>(PossibleGridX->getOperand(0));
+                            if(PossibleGridAllocation  == GridTotalAllocation){
+                                  BitCastInst* CopyDestination = dyn_cast_or_null<BitCastInst>(TempMemCpy->getArgOperand(1));
+                                  AllocaInst* DestinationAllocation  = dyn_cast_or_null<AllocaInst>(CopyDestination->getOperand(0));
+                                  errs() << *DestinationAllocation << "DEST\n";
+                              for(Function::iterator BasicB1 = MainFunction->begin();  BasicB1 != MainFunction->end(); BasicB1++)
+                                  for (BasicBlock::iterator CurrentInstruction3 = BasicB1->begin(); CurrentInstruction3 != BasicB1->end(); ++CurrentInstruction3) {
+                                    if( CallInst* FuncCall =  dyn_cast<CallInst>(CurrentInstruction3 )){
+                                        StringRef FunctionName = FuncCall->getCalledFunction()->getName();
+                                        if(FunctionName.contains("dim3") == true) {
+                                      errs() << *FuncCall << "\n";
+                                        if( FuncCall->getArgOperand(0) ==  DestinationAllocation){
+                                          Value* GridX = FuncCall->getArgOperand(1);
+                                           return GridX;
+                                        }
+                                      }}
+                                  }
+                              
+                            }
+                          
+                          
+                          }
+                      
+                      }
+                    
+                  }
+                }
+               }
+          }
+}
+
+
+}
+
+struct CudaConfigurations findConfigurationCall(BasicBlock* BB){
+      struct CudaConfigurations Confg;
+      Value* ThreadX = findThreadX(BB);
+      Function* MainFunction = BB->getParent();
+      Type* Int32Type = Type::getInt32Ty(BB->getContext());
+        for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {  
+          if(CallInst* FunctionCall = dyn_cast<CallInst>(CurrentInstruction) ){
+               StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
+               if(FunctionName == "cudaConfigureCall"){
+                LoadInst* GridLoadInstr = dyn_cast_or_null<LoadInst>(FunctionCall->getArgOperand(0)); // 0 Grid X oluyor
+
+               Confg.ConfigCall = FunctionCall;
+                GetElementPtrInst* GEPS =  dyn_cast_or_null<GetElementPtrInst>(GridLoadInstr->getPointerOperand()); // Grid {i64, i32} şekilde bir struct. 
+                AllocaInst* GridAlloca = dyn_cast_or_null<AllocaInst>(GEPS->getPointerOperand()); // Grid'in alloca instruction'ı
+                for (Use& U : GridAlloca->uses()) {
+                  User* User = U.getUser();
+                  BitCastInst* Casted = dyn_cast_or_null<BitCastInst>(User);
+                  if(Casted != nullptr){
+                    Instruction* TmpInstruction = Casted;
+                    MemCpyInst* GridMemoryCopy = nullptr; 
+                    while(GridMemoryCopy == nullptr){
+                      TmpInstruction = TmpInstruction->getNextNode();
+                      GridMemoryCopy = dyn_cast_or_null<MemCpyInst>(TmpInstruction);
+                    }
+                    BitCastInst* CopySrc = dyn_cast_or_null<BitCastInst>(GridMemoryCopy->getArgOperand(1));
+                    AllocaInst* GridTotalAllocation  = dyn_cast_or_null<AllocaInst>(CopySrc->getOperand(0));
+                    
+                    bool Found = false;
+                    for(Function::iterator BasicB = MainFunction->begin();  BasicB != MainFunction->end(); BasicB++)
+                      for (BasicBlock::iterator CurrentInstruction2 = BasicB->begin(); CurrentInstruction2 != BasicB->end(); ++CurrentInstruction2) {  
+                          if( MemCpyInst* TempMemCpy =  dyn_cast<MemCpyInst>(CurrentInstruction2 )){
+                            BitCastInst* PossibleGridX = dyn_cast_or_null<BitCastInst>(TempMemCpy->getArgOperand(0));
+                            AllocaInst* PossibleGridAllocation  = dyn_cast_or_null<AllocaInst>(PossibleGridX->getOperand(0));
+                            if(PossibleGridAllocation  == GridTotalAllocation){
+                                  BitCastInst* CopyDestination = dyn_cast_or_null<BitCastInst>(TempMemCpy->getArgOperand(1));
+                                  AllocaInst* DestinationAllocation  = dyn_cast_or_null<AllocaInst>(CopyDestination->getOperand(0));
+                                  errs() << *DestinationAllocation << "DEST\n";
+                              for(Function::iterator BasicB1 = MainFunction->begin();  BasicB1 != MainFunction->end(); BasicB1++)
+                                  for (BasicBlock::iterator CurrentInstruction3 = BasicB1->begin(); CurrentInstruction3 != BasicB1->end(); ++CurrentInstruction3) {
+                                    if( CallInst* FuncCall =  dyn_cast<CallInst>(CurrentInstruction3 )){
+                                        StringRef FunctionName = FuncCall->getCalledFunction()->getName();
+                                        if(FunctionName.contains("dim3") == true) {
+                                      errs() << *FuncCall << "\n";
+                                        if( FuncCall->getArgOperand(0) ==  DestinationAllocation){
+                                          Value* GridX = FuncCall->getArgOperand(1);
+                                          Instruction* GridXAsInstruction = dyn_cast_or_null<Instruction>(GridX);
+                                          
+                                          IRBuilder<> Builder(GridXAsInstruction->getNextNode());
+                                          Constant *Three = ConstantInt::get(Int32Type, 3);
+                                          Value* OriginalX = Builder.CreateMul(ThreadX, GridX);
+                                          Confg.OriginalX = OriginalX;
+                                          FuncCall->setArgOperand(1, Builder.CreateMul(GridXAsInstruction, Three));
+                                          break;  
+                                        }
+                                      }}
+                                  }
+                              
+                            }
+                          
+                          
+                          }
+                      
+                      }
+                    
+                  }
+                }
+               }
+          }
+}
+
+return Confg;
+}
+
   bool runOnModule(Module &M) override {
 
     CallInst* Cuda;
+
+      struct CudaConfigurations Confg;
     Function *CudaMalloc = M.getFunction("cudaMalloc");
     LLVMContext& Context = M.getContext();
     Type* Int32Type = Type::getInt32Ty(Context);
@@ -1009,7 +1145,8 @@ struct RMTHost : public ModulePass {
           if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
                StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
                 if(isReplicate(FunctionCall)){
-                  
+                  Confg = findConfigurationCall(BB->getPrevNode());
+                  Cuda = Confg.ConfigCall;
                    CreatedOutputs.clear();
                     FunctionType* KernelType = FunctionCall->getFunctionType();
                     unsigned int ParamSize = KernelType->getNumParams();
@@ -1056,11 +1193,10 @@ struct RMTHost : public ModulePass {
                      CreatedOutputs.push_back(NewOutput);
                      } 
                     // FIX ME!!!!!!!
-                    CreatedOutputs.push_back(ConstantInt::get(Int32Type, 256));
+                    CreatedOutputs.push_back(Confg.OriginalX); //PROBLEM!!!
                     CreatedOutputs.push_back(ConstantInt::get(Int32Type, 1  ));
                      
                     for(int I =  CreatedOutputs.size() - 4; I < CreatedOutputs.size() - 2 ; I++){
-                      errs() <<  *CreatedOutputs.at(I) << "\n";
                       CreatedOutputs.at(I) = Builder.CreateLoad(CreatedOutputs.at(I));
                     }
                     //  errs() << *F << "\n";
@@ -1116,18 +1252,13 @@ struct RMTHost : public ModulePass {
 
 
                     Type *TypeOfOutput = SizeOfTheOutput.second.first;
-                    Function *Majority = M.getFunction("_Z16majorityVoting15PfS_S_");
-                    /*
+                    Function *Majority = M.getFunction("majorityVoting15");
+                    
                     if (Majority == nullptr)
                     Majority = createMajorityVoting(M, dyn_cast<PointerType>(TypeOfOutput));
-                    */
+                    
                     std::vector<Value *> Args;
-                    for(int i =0; i < CreatedOutputs.size(); i++)
-                       errs() << *CreatedOutputs.at(i) << "+*+*\n";
 
-                    errs() << *CreatedOutputs.at(CreatedOutputs.size() - 3)  << "\n";
-                    errs() << *CreatedOutputs.at(CreatedOutputs.size() - 4)  << "\n";
-                    errs() << *dyn_cast<CallInst>(NewFunctionCall)->getArgOperand(ParamSize-1) << "\n";
 
                     Args.push_back(
                       Builder.CreateLoad(
@@ -1136,14 +1267,14 @@ struct RMTHost : public ModulePass {
                         )); // A
                     Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 4))->getOperand(0)));
                     Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 3))->getOperand(0)));    
-                    /*
+                    
                     Args.push_back(
                       Builder.CreateLoad(
                         dyn_cast<Instruction>(dyn_cast<CallInst>(NewFunctionCall)->getArgOperand(ParamSize-1))->getOperand(0)
                         
                         )); // A
                     Args.push_back( SizeOfTheOutput.first);
-*/
+
                    
                    Builder.CreateCall(Majority, Args);
                     
@@ -1153,53 +1284,6 @@ struct RMTHost : public ModulePass {
                 CurrentInstruction++;
                 
             }else if (FunctionName == "cudaConfigureCall") {
-              Cuda = FunctionCall;
-              
-              LoadInst* BlockLoadInstr = dyn_cast_or_null<LoadInst>(Cuda->getArgOperand(0));
-              if(BlockLoadInstr == nullptr)
-                continue;
-                
-                GetElementPtrInst* GEPS =  dyn_cast_or_null<GetElementPtrInst>(BlockLoadInstr->getPointerOperand());
-                for (auto& U : GEPS->getPointerOperand()->uses()) {
-                  User* user = U.getUser(); 
-                  BitCastInst* bit = dyn_cast_or_null<BitCastInst>(user);
-                  if(bit != nullptr){
-                     MemCpyInst* Mem =  dyn_cast_or_null<MemCpyInst>(bit->getNextNode()->getNextNode());
-                     errs() << *Mem << "\n";
-                     bit = dyn_cast_or_null<BitCastInst>(Mem->getArgOperand(1));
-                     AllocaInst* all  = dyn_cast_or_null<AllocaInst>(bit->getOperand(0));
-                     BasicBlock *BB2 = all->getParent();
-                     errs() << * all << "\n";
-        for (BasicBlock::iterator CurrentInstruction2 = BB2->begin(); CurrentInstruction2 != BB2->end(); ++CurrentInstruction2) {  
-          if( MemCpyInst* Mem2 =  dyn_cast<MemCpyInst>(CurrentInstruction2 )){
-                     BitCastInst* bit2 = dyn_cast_or_null<BitCastInst>(Mem2->getArgOperand(0));
-                     AllocaInst* all2  = dyn_cast_or_null<AllocaInst>(bit2->getOperand(0));
-                    if(all2 == all){
-                     BitCastInst* bit3 = dyn_cast_or_null<BitCastInst>(Mem2->getArgOperand(1));
-                     AllocaInst* all3  = dyn_cast_or_null<AllocaInst>(bit3->getOperand(0));
-                    errs() << *all3 << "\n";
-                     for (BasicBlock::iterator CurrentInstruction3 = BB2->begin(); CurrentInstruction3 != BB2->end(); ++CurrentInstruction3) {
-          if( CallInst* FNCall =  dyn_cast<CallInst>(CurrentInstruction3 )){
-                      StringRef fnname = FNCall->getCalledFunction()->getName();
-                      if(fnname.contains("dim3") == true && FNCall->getArgOperand(0) ==  all3){
-                        Value* GridX = FNCall->getArgOperand(1);
-                        errs() << *GridX->getType() << "\n";
-                        
-                        Constant* BlockX = dyn_cast<Constant>(FNCall->getArgOperand(1));
-
-                     Value *NewValue = ConstantInt::get(Int32Type, 3);
-                       FNCall->setArgOperand(1,NewValue); 
-                    
-                        break;  
-                      }
-                     }
-                    }
-          }
-        }
-                    
-                      }
-                }
-                }
               
             }else if (FunctionName.contains("cudaMalloc")) {
               CudaMallocFunctionCalls.push_back(FunctionCall);  
