@@ -72,7 +72,23 @@ struct RMTDevice : public ModulePass {
       }
       }
     return nullptr;
-  }  
+  } 
+
+  StoreInst* getTheYID(Function* Kernel){
+      for (Function::iterator BB = Kernel->begin(); BB != Kernel->end(); ++BB) {
+        for (BasicBlock::iterator CurrentInstruction = BB->begin();CurrentInstruction != BB->end(); ++CurrentInstruction) {   
+          if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
+            StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
+            if(FunctionName == "llvm.nvvm.read.ptx.sreg.tid.y"){
+              for (auto& U : FunctionCall->uses()) {
+                  return  dyn_cast<StoreInst>(dyn_cast<Instruction> (U.getUser())->getNextNode());  
+                }
+              }
+        }
+      }
+      }
+    return nullptr;
+  }   
   StoreInst* getTheLastStore(Function* Kernel){
     StoreInst *LastStoreInst;
       for (Function::iterator BB = Kernel->begin(); BB != Kernel->end(); ++BB) {
@@ -247,6 +263,35 @@ struct RMTDevice : public ModulePass {
     return MajorityVotingFunction;
   }
 
+
+  Value* Test(std::vector<Value*>* IndexCalc, Value* Index){
+      if(dyn_cast_or_null<AllocaInst>(Index) != nullptr){
+        return nullptr;
+      }
+
+      if (dyn_cast_or_null<Instruction>(Index) == nullptr) {
+        errs() << *Index << "\n";
+        IndexCalc->push_back(Index);
+        return nullptr;
+      }
+
+
+      Instruction* IndexInstruction = dyn_cast_or_null<Instruction>(Index);
+      IndexCalc->push_back(IndexInstruction);
+      for(size_t OperandIndex = 0; OperandIndex < IndexInstruction->getNumOperands(); OperandIndex++){
+        Test(IndexCalc,IndexInstruction->getOperand(OperandIndex));
+
+        
+      }
+      
+
+
+
+
+    return nullptr;
+
+  }
+
   bool runOnModule(Module &M) override {
      NamedMDNode *Annotations = M.getNamedMetadata("nvvm.annotations");
      LLVMContext& Context = M.getContext();
@@ -319,6 +364,7 @@ struct RMTDevice : public ModulePass {
         OriginalY->setName("OriginalY");
         //errs() << *NewKernelFunction << "\n";
         StoreInst* XID = getTheXID(NewKernelFunction);
+        StoreInst* YID = getTheYID(NewKernelFunction);
         IRBuilder<> Builder(XID->getNextNode()) ;
         Value* OriginalXAddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalX.addr");
         Builder.CreateStore(OriginalX, OriginalXAddr);
@@ -338,7 +384,9 @@ struct RMTDevice : public ModulePass {
          );
          ResultA->setName("div");
           Builder.CreateStore(ResultA, IntA);
-         /*
+         
+/*
+         // Burası bir şekilde print yaptıran kod. kalmalı
             Function *a;
     Value *b;
     Value *c;
@@ -370,19 +418,28 @@ struct RMTDevice : public ModulePass {
     AllocaInst *printFAlloca = Builder.CreateAlloca(d->getScalarType());
      auto XX =  Builder.CreateInBoundsGEP(printFAlloca, {ConstantInt::get(Type::getInt32Ty(Context),0),ConstantInt::get(Type::getInt32Ty(Context),0)});
      Builder.CreateStore( Builder.CreateLoad(yy->getPointerOperand()), XX);
-
         Builder.CreateCall(
             M.getFunction("vprintf"),
             {Builder.CreateGlobalStringPtr("%d \n"),
              Builder.CreateBitCast(printFAlloca, Int8ptrType)
              });
-             */
+*/  
+             
         Value* ThreadIDX = XID->getPointerOperand();
         Value* Urem = Builder.CreateSRem(
             Builder.CreateLoad(XID->getPointerOperand()), 
             Builder.CreateLoad(OriginalXAddr)
         );
         Builder.CreateStore(Urem, ThreadIDX );
+        if(YID != nullptr){
+        Value* ThreadIDY = YID->getPointerOperand();
+        Value* UremY = Builder.CreateSRem(
+            Builder.CreateLoad(YID->getPointerOperand()), 
+            Builder.CreateLoad(OriginalYAddr)
+        );
+        Builder.CreateStore(UremY, ThreadIDY );
+
+        }
 
         StoreInst* LastStore = getTheLastStore(NewKernelFunction);
         Instruction* CalculatedValue = dyn_cast<Instruction>(LastStore->getValueOperand());
@@ -397,7 +454,7 @@ struct RMTDevice : public ModulePass {
 
         LoadInst* First =  dyn_cast_or_null<LoadInst>(CalculatedValue->getOperand(0));
         if(First != nullptr){
-        GetElementPtrInst* FirstGep =  dyn_cast_or_null<GetElementPtrInst>(First->getOperand(0));
+         GetElementPtrInst* FirstGep =  dyn_cast_or_null<GetElementPtrInst>(First->getOperand(0));
           LoadInst* FirstArray =  dyn_cast<LoadInst>(FirstGep->getOperand(0));
           Instruction* FirstArrayIndex =  dyn_cast<Instruction>(FirstGep->getOperand(1));
 
@@ -453,185 +510,92 @@ struct RMTDevice : public ModulePass {
             Fadd->setFastMathFlags(FMF);
 
             Builder.CreateStore(Fadd, NthElement);
-          }else{
+          }else if (BinaryOperator* Operation = dyn_cast<BinaryOperator>(CalculatedValue)){
             //LoadInst* First =  dyn_cast_or_null<LoadInst>();
-            errs() << *CalculatedValue << "\n";
-            errs() << *CalculatedValue->getOperand(0) << "\n";
-          }
-          // errs() << *NewKernelFunction << "\n";
-        
-  /*
-           
-         Builder.CreateLoad(DA1Addr);
-         
-     
-      
-        Builder.CreateBr(First->getParent()->getNextNode());
-        NewBasicBlock->setName("TmpBlock");
-  
-        BranchInst* Branch = dyn_cast<BranchInst>(Second->getNextNode());
-        Builder.SetInsertPoint(CMPZero->getNextNode());
-        Builder.CreateCondBr(CMPZero, NewBasicBlock, NewBasicBlock->getPrevNode());
+            errs() << "YOLOLO\n";
+            GetElementPtrInst* ArrayLocation = dyn_cast<GetElementPtrInst>(LastStore->getPointerOperand());
+            LoadInst* ArrayLoad = dyn_cast<LoadInst>(ArrayLocation->getPointerOperand());
+            Instruction* ArrayIndex =  dyn_cast<Instruction>(ArrayLocation->getOperand(1));
+            Builder.SetInsertPoint(ArrayLoad);
+            errs() << *ArrayLoad << "\n";
 
+            Instruction* CMPZero = dyn_cast<Instruction>(Builder.CreateICmpEQ(Builder.CreateLoad(IntA), Zero32Bit));
+            Instruction* NewInstruction = SplitBlockAndInsertIfThen(CMPZero, CMPZero->getNextNode(), false);
+            BranchInst* BranchZero = dyn_cast<BranchInst>(CMPZero->getNextNode());
+            BranchZero->swapSuccessors();
+            BasicBlock* FirstElseIf = BranchZero->getParent()->getNextNode();
+            BasicBlock* ZeroBB = FirstElseIf->getNextNode();
+            ZeroBB->moveBefore(FirstElseIf);
 
-        
+            Builder.SetInsertPoint(NewInstruction);
+            Instruction* CMPOne = dyn_cast<Instruction>(Builder.CreateICmpEQ(Builder.CreateLoad(IntA), One32Bit));
+            NewInstruction = SplitBlockAndInsertIfThen(CMPOne, CMPOne->getNextNode(), false);
+            BasicBlock* SecondElseIf = NewInstruction->getParent()->getNextNode();
 
+            BasicBlock* ForEndBB = SecondElseIf->getNextNode();
+            Builder.SetInsertPoint(NewInstruction);
+            Instruction* LoadedDA1 = Builder.CreateLoad(DA1Addr);
+            Instruction* Tmp = ArrayIndex;
+            std::vector<Value *> IndexCalc;
+            Test(&IndexCalc, Tmp);
+            Instruction* Cloned ;
+            ValueToValueMapTy VMap2, VMap3;
+                std::reverse(IndexCalc.begin(),IndexCalc.end());
+                for(size_t Index = 0  ; Index < IndexCalc.size(); Index++){
+                  Instruction* Tmp = dyn_cast_or_null<Instruction>(IndexCalc.at(Index));
+
+                  if(Tmp != nullptr){
+                  Cloned = Tmp ->clone();
+                  Cloned->insertBefore(LoadedDA1);
+                  VMap2[Tmp] = Cloned;
+                  llvm::RemapInstruction(Cloned, VMap2,
+                                        RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+                  }
+                }
+            Value* NewIndex = Builder.CreateGEP(LoadedDA1, Cloned);
+            Builder.CreateStore(CalculatedValue, NewIndex);
+
+            dyn_cast<BranchInst>(NewInstruction)->setSuccessor(0, ForEndBB);
+            Builder.SetInsertPoint(SecondElseIf->getFirstNonPHI());
+            Instruction* CMPTwo = dyn_cast<Instruction>(Builder.CreateICmpEQ(Builder.CreateLoad(IntA), Two32Bit));
+            
+            NewInstruction = SplitBlockAndInsertIfThen(CMPTwo, CMPTwo->getNextNode(), false);
+            NewInstruction->setSuccessor(0, ForEndBB);
+            BasicBlock* NewBB = NewInstruction->getParent();
+            Builder.SetInsertPoint(NewBB->getFirstNonPHI());
+            Instruction* LoadedDA2 = Builder.CreateLoad(DA2Addr);
+          for(size_t Index = 0  ; Index < IndexCalc.size(); Index++){
+            errs() << *IndexCalc.at(Index) << "\n";
+                  Instruction* Tmp = dyn_cast_or_null<Instruction>(IndexCalc.at(Index));
+                  if(Tmp != nullptr){
+                  Cloned = Tmp ->clone();
+                  Cloned->insertBefore(LoadedDA2);
+                  VMap3[Tmp] = Cloned;
+                  llvm::RemapInstruction(Cloned, VMap3,
+                                        RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+                  }
+                }
+            NewIndex = Builder.CreateGEP(LoadedDA2, Cloned);
+            Builder.CreateStore(CalculatedValue, NewIndex);
+            BranchInst* NewBranch = dyn_cast<BranchInst>(CMPTwo->getNextNode());
+            NewBranch->setSuccessor(1, ForEndBB);
+            errs() <<*NewBranch << "\n";
+
+            
+
+/*
 */
+
+
+
+              
+              }
+
         MDNode *N = MDNode::get(Context, MDString::get(Context, "kernel"));
         MDNode *TempN = MDNode::get(Context, ConstantAsMetadata::get(ConstantInt::get(Int32Type, 1)));
         MDNode *Con = MDNode::concatenate(N, TempN);
         Annotations->addOperand(MDNode::concatenate(MDNode::get(Context, ValueAsMetadata::get(NewKernelFunction)), Con));
 
-       /*
-
-        Instruction* Second =  dyn_cast<Instruction>(CalculatedValue->getOperand(1));
-
-        LoadInst* FirstOperand = dyn_cast<LoadInst>(Second->getOperand(0));
-        LoadInst* SecondOperand = dyn_cast<LoadInst>(Second->getOperand(1));
-
-        GetElementPtrInst* FirstOperandGEP =  dyn_cast<GetElementPtrInst>(FirstOperand->getOperand(0));
-        LoadInst* FirstOperandArray =  dyn_cast<LoadInst>(FirstOperandGEP->getOperand(0));
-        Instruction* FirstOperandArrayIndex =  dyn_cast<Instruction>(FirstOperandGEP->getOperand(1));
-
-
-
-        GetElementPtrInst* SecondOperandGEP =  dyn_cast<GetElementPtrInst>(SecondOperand->getOperand(0));
-        LoadInst* SecondOperandArray =  dyn_cast<LoadInst>(SecondOperandGEP->getOperand(0));
-        Instruction* SecondOperandArrayIndex =  dyn_cast<Instruction>(SecondOperandGEP->getOperand(1));
-
-        errs() << *FirstOperandArray << "\n";
-        errs() << *FirstOperandArrayIndex << "\n";
-
-        errs() << *SecondOperandArray << "\n";
-        errs() << *SecondOperandArrayIndex << "\n";
-        */
-        
-            /*
-
-        GetElementPtrInst* SecondGep =  dyn_cast<GetElementPtrInst>(Second->getOperand(0));
-        LoadInst* SecondArrray =  dyn_cast<LoadInst>(SecondGep->getOperand(0));
-        Instruction* SecondArrrayIndex =  dyn_cast<Instruction>(SecondGep->getOperand(1));
-
-        errs() << *SecondArrray << "\n";
-        errs() << *SecondArrrayIndex << "\n";
-
-        break;
-        errs() << *First->getOperand(0) << "\n";
-        errs() << *First->getOperand(1) << "\n";
-
-    
-        
-        Builder.SetInsertPoint(CalculatedValue->getNextNode());
-        Instruction* LoadedX = Builder.CreateLoad(IntA);
-        Instruction* CMP = dyn_cast<Instruction>(Builder.CreateICmpEQ(LoadedX, Zero32Bit));
-        Instruction* IfInstruction = SplitBlockAndInsertIfThen(CMP,CMP->getNextNode(), false);
-        BasicBlock* TMP1Block = IfInstruction->getParent();
-        BasicBlock* TMPBlock = TMP1Block->getNextNode();
-          
-
-        dyn_cast<BranchInst>(CMP->getNextNode())->swapSuccessors();
-        Builder.SetInsertPoint(IfInstruction);  
-        CalculatedValue = Builder.CreateLoad(CalculatedValue->getOperand(0));
-        Value* LoadedDA1 = Builder.CreateLoad(DA1Addr);
-        Value* LoadedIDX = Builder.CreateLoad(ThreadIDX);
-        Value* Location = Builder.CreateSExt(LoadedIDX, Int64Type); 
-        Value* ArrayLocation = Builder.CreateInBoundsGEP(LoadedDA1,{Location});
-        Instruction* Store = Builder.CreateStore(CalculatedValue, ArrayLocation);
-        BranchInst* Branch = dyn_cast<BranchInst>(Store->getNextNode());
-        errs() << *Branch <<"8585\n";
-        TMP1Block->moveAfter(TMPBlock);
-
-        BasicBlock* ElseIfCond = BasicBlock::Create(Context, "ElseIfCond");
-        BasicBlock* TMPBlock2 = BasicBlock::Create(Context, "TMPBlock2");
-        ElseIfCond->insertInto(TMP1Block->getParent()); 
-        Builder.SetInsertPoint(ElseIfCond);
-        
-        BasicBlock* ElseIfCond2 = BasicBlock::Create(Context, "ElseIfCond2");
-        Branch->setSuccessor(0, TMP1Block->getNextNode());
-        Branch = dyn_cast<BranchInst>(
-        Builder.CreateCondBr(Builder.CreateICmpEQ(Builder.CreateLoad(IntA), One32Bit),TMP1Block,TMP1Block->getNextNode()));
-
-        dyn_cast<BranchInst>(CMP->getNextNode())->setSuccessor(1, ElseIfCond);
-        ElseIfCond->moveAfter(TMPBlock);
-        //Branch->setSuccessor(0, TMP1Block->getNextNode());
-
-        TMPBlock2->insertInto(TMP1Block->getParent());
-        Builder.SetInsertPoint(TMPBlock2);
-        CalculatedValue = Builder.CreateLoad(CalculatedValue->getOperand(0));
-        Value* LoadedDA2 = Builder.CreateLoad(DA2Addr);
-        LoadedIDX = Builder.CreateLoad(ThreadIDX);
-        Location = Builder.CreateSExt(LoadedIDX, Int64Type); 
-        ArrayLocation = Builder.CreateInBoundsGEP(LoadedDA2,{Location});
-        Store = Builder.CreateStore(CalculatedValue, ArrayLocation);
-        Builder.CreateBr(TMP1Block->getNextNode());
-
-
-        ElseIfCond2->insertInto(TMP1Block->getParent());
-        Builder.SetInsertPoint(ElseIfCond2);
-        Builder.CreateCondBr(Builder.CreateICmpEQ(Builder.CreateLoad(IntA), Two32Bit),TMPBlock2,TMP1Block->getNextNode());
-        Branch->setSuccessor(1, ElseIfCond2);
-        ElseIfCond2->moveAfter(TMP1Block);
-        TMPBlock2->moveAfter(ElseIfCond2);
-
- break;
-
-        //Branch = dyn_cast<BranchInst>(Store->getNextNode());
-
-       
-
-        /*  
-        Builder.CreateLoad(XID);
-
-
-      /*  
-        SplitBlockAndInsertIfThenElse(CMP, CMP->getNextNode(), &ThenTerm,
-                                      &ElseTerm);
-        BasicBlock* TMPBB = ElseTerm->getParent()->getNextNode();
-      
-        Builder.SetInsertPoint(ThenTerm);
-        for(BasicBlock::iterator CInstruction = TMPBB->begin();CInstruction != TMPBB->end(); CInstruction++){
-          Instruction* Cloned = CInstruction->clone();
-          Cloned->insertBefore(ThenTerm);
-        }
-        0/
-        /*
-        Instruction* newBB = SplitBlockAndInsertIfThen(CMP, LoadedX->getNextNode()->getNextNode(), false);
-        errs() << *newBB << "\n";
-        BranchInst
-        
-
-*/
-        /*
-        Val.ue* Pointer = dyn_cast<Value>(Index->idx_begin());
-        errs() << *Pointer<< "Pointer\n";
-        errs() << *Index<< "Index\n";
-
-        Builder.SetInsertPoint(LastStore);
-        Instruction* IsOriginal = dyn_cast<Instruction>(Builder.CreateICmpEQ(ResultA, Zero32Bit));
-        Instruction* Branch = SplitBlockAndInsertIfThen(IsOriginal, IsOriginal->getNextNode(), false);
-        LastStore->moveBefore(Branch);
-
-        Builder.SetInsertPoint(dyn_cast<Instruction>(Branch->getParent()->getNextNode()->begin()));
-        Instruction* IsFirstOne = dyn_cast<Instruction>(Builder.CreateICmpEQ(ResultA, One32Bit));
-        Branch = SplitBlockAndInsertIfThen(IsFirstOne, IsFirstOne->getNextNode(), false);
-        Builder.SetInsertPoint(dyn_cast<Instruction>(Branch));
-        Value* LoadedDA1Addr = Builder.CreateLoad(DA1Addr);
-        Value* DA1Location = Builder.CreateInBoundsGEP(LoadedDA1Addr,{Pointer});
-        errs() << *DA1Location << "\n";
-        Builder.CreateStore(CalculatedValue, DA1Location);
-
-
-        errs() << *Branch << "\n";
-        Builder.SetInsertPoint(dyn_cast<Instruction>(Branch->getParent()->getNextNode()->begin()));
-        Instruction* IsSecondOne = dyn_cast<Instruction>(Builder.CreateICmpEQ(ResultA, Two32Bit));
-        Branch = SplitBlockAndInsertIfThen(IsSecondOne, IsSecondOne->getNextNode(), false);
-        Builder.SetInsertPoint(dyn_cast<Instruction>(Branch));
-        Value* LoadedDA2Addr = Builder.CreateLoad(DA2Addr);
-        Value* DA2Location = Builder.CreateInBoundsGEP(LoadedDA2Addr,{Pointer});
-        Builder.CreateStore(CalculatedValue, DA2Location);
-<
-
-*/
 
       FunctionCallee MajorityVotingCallee = M.getOrInsertFunction(
           "majorityVoting15", Type::getVoidTy(Context),
@@ -767,6 +731,7 @@ struct RMTHost : public ModulePass {
     LLVMContext &Context = M.getContext();
     Type *Int64Type = Type::getInt64Ty(Context);
     Type *Int32Type = Type::getInt32Ty(Context);
+    Type *FloatType = Type::getFloatTy(Context);
     Value *Zero32Bit = ConstantInt::get(Int32Type, 0);
     PointerType *Int8PtrType = Type::getInt8PtrTy(Context);
     PointerType *Int32PtrType = Type::getInt32PtrTy(Context);
@@ -789,7 +754,7 @@ struct RMTHost : public ModulePass {
     while(Args != RevistedFunction->arg_end()){
       Value* Arguman = Args++;
       Type* ArgumanType = Arguman->getType();
-      if (ArgumanType == Int32PtrType || ArgumanType == Int32Type)
+      if (ArgumanType == Int32PtrType || ArgumanType == Int32Type || ArgumanType == FloatType)
         SizeParameter = 4;
       else
         SizeParameter = 8; // Diğerleri pointer olduğu için herhalde. Char*,
@@ -1047,10 +1012,75 @@ Value* findThreadX(BasicBlock* BB){
 
 
 }
+Value* findThreadY(BasicBlock* BB){
 
+      Function* MainFunction = BB->getParent();
+      Type* Int32Type = Type::getInt32Ty(BB->getContext());
+        for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {  
+          if(CallInst* FunctionCall = dyn_cast<CallInst>(CurrentInstruction) ){
+               StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
+               if(FunctionName == "cudaConfigureCall"){
+                LoadInst* GridLoadInstr = dyn_cast_or_null<LoadInst>(FunctionCall->getArgOperand(3)); // 0 Grid X oluyor
+
+                GetElementPtrInst* GEPS =  dyn_cast_or_null<GetElementPtrInst>(GridLoadInstr->getPointerOperand()); // Grid {i64, i32} şekilde bir struct. 
+                AllocaInst* GridAlloca = dyn_cast_or_null<AllocaInst>(GEPS->getPointerOperand()); // Grid'in alloca instruction'ı
+                for (Use& U : GridAlloca->uses()) {
+                  User* User = U.getUser();
+                  BitCastInst* Casted = dyn_cast_or_null<BitCastInst>(User);
+                  if(Casted != nullptr){
+                    Instruction* TmpInstruction = Casted;
+                    MemCpyInst* GridMemoryCopy = nullptr; 
+                    while(GridMemoryCopy == nullptr){
+                      TmpInstruction = TmpInstruction->getNextNode();
+                      GridMemoryCopy = dyn_cast_or_null<MemCpyInst>(TmpInstruction);
+                    }
+                    BitCastInst* CopySrc = dyn_cast_or_null<BitCastInst>(GridMemoryCopy->getArgOperand(1));
+                    AllocaInst* GridTotalAllocation  = dyn_cast_or_null<AllocaInst>(CopySrc->getOperand(0));
+                    errs() << *GridTotalAllocation << "\n";
+                    bool Found = false;
+                    for(Function::iterator BasicB = MainFunction->begin();  BasicB != MainFunction->end(); BasicB++)
+                      for (BasicBlock::iterator CurrentInstruction2 = BasicB->begin(); CurrentInstruction2 != BasicB->end(); ++CurrentInstruction2) {  
+                          if( MemCpyInst* TempMemCpy =  dyn_cast<MemCpyInst>(CurrentInstruction2 )){
+                            BitCastInst* PossibleGridX = dyn_cast_or_null<BitCastInst>(TempMemCpy->getArgOperand(0));
+                            AllocaInst* PossibleGridAllocation  = dyn_cast_or_null<AllocaInst>(PossibleGridX->getOperand(0));
+                            if(PossibleGridAllocation  == GridTotalAllocation){
+                                  BitCastInst* CopyDestination = dyn_cast_or_null<BitCastInst>(TempMemCpy->getArgOperand(1));
+                                  AllocaInst* DestinationAllocation  = dyn_cast_or_null<AllocaInst>(CopyDestination->getOperand(0));
+                                  errs() << *DestinationAllocation << "DEST\n";
+                              for(Function::iterator BasicB1 = MainFunction->begin();  BasicB1 != MainFunction->end(); BasicB1++)
+                                  for (BasicBlock::iterator CurrentInstruction3 = BasicB1->begin(); CurrentInstruction3 != BasicB1->end(); ++CurrentInstruction3) {
+                                    if( CallInst* FuncCall =  dyn_cast<CallInst>(CurrentInstruction3 )){
+                                        StringRef FunctionName = FuncCall->getCalledFunction()->getName();
+                                        if(FunctionName.contains("dim3") == true) {
+                                      errs() << *FuncCall << "\n";
+                                        if( FuncCall->getArgOperand(0) ==  DestinationAllocation){
+                                          Value* GridX = FuncCall->getArgOperand(2);
+                                          errs() << *GridX << "YY\n";
+                                           return GridX;
+                                        }
+                                      }}
+                                  }
+                              
+                            }
+                          
+                          
+                          }
+                      
+                      }
+                    
+                  }
+                }
+               }
+          }
+}
+
+
+}
 struct CudaConfigurations findConfigurationCall(BasicBlock* BB){
       struct CudaConfigurations Confg;
+      errs() << "BURADA\n";
       Value* ThreadX = findThreadX(BB);
+      Value* ThreadY = findThreadY(BB);
       Function* MainFunction = BB->getParent();
       Type* Int32Type = Type::getInt32Ty(BB->getContext());
         for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {  
@@ -1093,13 +1123,19 @@ struct CudaConfigurations findConfigurationCall(BasicBlock* BB){
                                       errs() << *FuncCall << "\n";
                                         if( FuncCall->getArgOperand(0) ==  DestinationAllocation){
                                           Value* GridX = FuncCall->getArgOperand(1);
+                                          Value* GridY = FuncCall->getArgOperand(2);
                                           Instruction* GridXAsInstruction = dyn_cast_or_null<Instruction>(GridX);
+                                          Instruction* GridYAsInstruction = dyn_cast_or_null<Instruction>(GridY);
                                           
                                           IRBuilder<> Builder(GridXAsInstruction->getNextNode());
                                           Constant *Three = ConstantInt::get(Int32Type, 3);
                                           Value* OriginalX = Builder.CreateMul(ThreadX, GridX);
                                           Confg.OriginalX = OriginalX;
                                           FuncCall->setArgOperand(1, Builder.CreateMul(GridXAsInstruction, Three));
+                                          if(GridYAsInstruction != nullptr)
+                                          Builder.SetInsertPoint(GridYAsInstruction->getNextNode());
+                                          Value* OriginalY = Builder.CreateMul(ThreadY, GridY);
+                                          Confg.OriginalY = OriginalY;
                                           break;  
                                         }
                                       }}
@@ -1194,7 +1230,7 @@ return Confg;
                      } 
                     // FIX ME!!!!!!!
                     CreatedOutputs.push_back(Confg.OriginalX); //PROBLEM!!!
-                    CreatedOutputs.push_back(ConstantInt::get(Int32Type, 1  ));
+                    CreatedOutputs.push_back(Confg.OriginalY);
                      
                     for(int I =  CreatedOutputs.size() - 4; I < CreatedOutputs.size() - 2 ; I++){
                       CreatedOutputs.at(I) = Builder.CreateLoad(CreatedOutputs.at(I));
@@ -1252,7 +1288,7 @@ return Confg;
 
 
                     Type *TypeOfOutput = SizeOfTheOutput.second.first;
-                    Function *Majority = M.getFunction("majorityVoting15");
+                    Function *Majority = M.getFunction("_Z16majorityVoting15PfS_S_");
                     
                     if (Majority == nullptr)
                     Majority = createMajorityVoting(M, dyn_cast<PointerType>(TypeOfOutput));
@@ -1267,16 +1303,16 @@ return Confg;
                         )); // A
                     Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 4))->getOperand(0)));
                     Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 3))->getOperand(0)));    
-                    
+                    /*
                     Args.push_back(
                       Builder.CreateLoad(
                         dyn_cast<Instruction>(dyn_cast<CallInst>(NewFunctionCall)->getArgOperand(ParamSize-1))->getOperand(0)
                         
                         )); // A
                     Args.push_back( SizeOfTheOutput.first);
-
+*/
                    
-                   Builder.CreateCall(Majority, Args);
+                  Builder.CreateCall(Majority, Args);
                     
                   //Builder.CreateCall(F, Args);
                   
