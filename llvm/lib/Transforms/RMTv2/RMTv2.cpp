@@ -59,7 +59,7 @@ struct RMTv2Device : public ModulePass {
   RMTv2Device() : ModulePass(ID) {}
 
 
-  std::pair<StoreInst*, CallInst*> getTheXID(Function* Kernel){
+  StoreInst* getTheXID(Function* Kernel){
     StoreInst* ThreadIDX;
     CallInst* BlockIDX;
       for (Function::iterator BB = Kernel->begin(); BB != Kernel->end(); ++BB) {
@@ -70,24 +70,35 @@ struct RMTv2Device : public ModulePass {
               for (auto& U : FunctionCall->uses())
                  ThreadIDX = dyn_cast<StoreInst>(dyn_cast<Instruction> (U.getUser())->getNextNode());  
             else if(FunctionName == "llvm.nvvm.read.ptx.sreg.ctaid.x") {
-              errs() << *FunctionCall << "\n";  
               BlockIDX =  FunctionCall;
               }
         }
       }
       }
-    return std::make_pair(ThreadIDX, BlockIDX);
+    return ThreadIDX;
   }
 
-  void changeXID(Function *Kernel, Value *ToBeChange) {
-    StoreInst *ThreadIDX;
-    CallInst *BlockIDX;
+  void changeXID(Function *Kernel, Value* NewCreatedCall, Value *ToBeChange, IRBuilder<> Builder) {
+    for (Function::iterator BB = Kernel->begin(); BB != Kernel->end(); ++BB) {
+      for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
+        if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
+          if(FunctionCall == NewCreatedCall)
+            continue;
+          StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
+          if (FunctionName == "llvm.nvvm.read.ptx.sreg.ctaid.x") {
+            FunctionCall->replaceAllUsesWith(Builder.CreateLoad(ToBeChange));
+          } 
+        }
+      }
+    }
+  }
+
+    void changeYID(Function *Kernel, Value *ToBeChange) {
     for (Function::iterator BB = Kernel->begin(); BB != Kernel->end(); ++BB) {
       for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
         if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
           StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
-          if (FunctionName == "llvm.nvvm.read.ptx.sreg.tid.x") {
-            
+          if (FunctionName == "llvm.nvvm.read.ptx.sreg.tid.y") {
             Instruction* Add = FunctionCall->getPrevNode();
             Instruction* BlockIdCall = Add->getPrevNode();
             BlockIdCall->replaceAllUsesWith(ToBeChange);
@@ -95,7 +106,155 @@ struct RMTv2Device : public ModulePass {
         }
       }
     }
+  }  Function* createMajorityFuncton(Module &M, FunctionCallee MajorityVotingCallee){
+
+
+    NamedMDNode *Annotations = M.getNamedMetadata("nvvm.annotations");
+    LLVMContext &Context = M.getContext();
+    errs() << "Byrada\n";
+
+
+    MDNode *N = MDNode::get(Context, MDString::get(Context, "kernel"));
+    MDNode *TempN = MDNode::get(Context, ConstantAsMetadata::get(ConstantInt::get(
+                                       llvm::Type::getInt32Ty(Context), 1)));
+    // MDNode* TempA = MDNode::get(C,
+    // ValueAsMetadata::get(MajorityVotingFunction));
+    MDNode *Con = MDNode::concatenate(N, TempN);
+    // Con = MDNode::concatenate(Con, TempA);
+
+    FunctionCallee GetBlockDim =
+        M.getFunction("llvm.nvvm.read.ptx.sreg.ntid.x");
+    FunctionCallee GetGridDim =
+        M.getFunction("llvm.nvvm.read.ptx.sreg.ctaid.x");
+    FunctionCallee GetThread = M.getFunction("llvm.nvvm.read.ptx.sreg.tid.x");
+
+    Function *MajorityVotingFunction =
+        dyn_cast<Function>(MajorityVotingCallee.getCallee());
+    MajorityVotingFunction->setCallingConv(CallingConv::C);
+
+
+
+    BasicBlock *EntryBlock =
+        BasicBlock::Create(Context, "entry", MajorityVotingFunction);
+
+    BasicBlock *IfBlock =
+        BasicBlock::Create(Context, "If", MajorityVotingFunction);
+    BasicBlock *SecondIfBlock =
+        BasicBlock::Create(Context, "If", MajorityVotingFunction);
+    BasicBlock *ElseBlock =
+        BasicBlock::Create(Context, "Else", MajorityVotingFunction);
+
+    BasicBlock *TailBlock =
+        BasicBlock::Create(Context, "Tail", MajorityVotingFunction);
+    IRBuilder<> Builder(EntryBlock);
+
+    Function::arg_iterator Args = MajorityVotingFunction->arg_begin();
+    Value *DeviceA = Args++;
+    Value *DeviceB = Args++;
+    Value *DeviceC = Args++;
+    Value *DeviceOutput = Args++;
+    Value *ArraySize = Args;
+
+    AllocaInst *DeviceAAllocation = Builder.CreateAlloca(DeviceA->getType());
+    AllocaInst *DeviceBAllocation = Builder.CreateAlloca(DeviceB->getType());
+    AllocaInst *DeviceCAllocation = Builder.CreateAlloca(DeviceC->getType());
+    AllocaInst *DeviceOutputAllocation =
+        Builder.CreateAlloca(DeviceOutput->getType());
+    AllocaInst *DeviceArraySizeAllocation =
+        Builder.CreateAlloca(ArraySize->getType());
+    
+    Value *ThreadIDptr = Builder.CreateAlloca(Type::getInt32Ty(Context));
+
+    StoreInst *DeviceAStore = Builder.CreateStore(DeviceA, DeviceAAllocation);
+    StoreInst *DeviceBStore = Builder.CreateStore(DeviceB, DeviceBAllocation);
+    StoreInst *DeviceCStore = Builder.CreateStore(DeviceC, DeviceCAllocation);
+    StoreInst *DeviceOutputStore =
+        Builder.CreateStore(DeviceOutput, DeviceOutputAllocation);
+    StoreInst *DeviceArraySizeStore =
+        Builder.CreateStore(ArraySize, DeviceArraySizeAllocation);
+
+    Value *ThreadBlock = Builder.CreateCall(GetBlockDim);
+    Value *ThreadGrid = Builder.CreateCall(GetGridDim);
+    Value *BlockXGrid = Builder.CreateMul(ThreadBlock, ThreadGrid);
+    Value *ThreadNumber = Builder.CreateCall(GetThread);
+    Value *ThreadID = Builder.CreateAdd(BlockXGrid, ThreadNumber);
+    Builder.CreateStore(ThreadID, ThreadIDptr);
+    Value *TID = Builder.CreateLoad(ThreadIDptr);
+    Value *Extented = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
+
+     Value *ArraySizeValue = Builder.CreateLoad(DeviceArraySizeAllocation);
+
+    // Builder.CreateStore(TID,XX);
+
+    Value *SizeTidCMP = Builder.CreateICmpULT(Extented, ArraySizeValue);
+    Instruction *Branch = Builder.CreateCondBr(SizeTidCMP, IfBlock, TailBlock);
+
+    Builder.SetInsertPoint(IfBlock);
+
+    Value *DeviceAPointer = Builder.CreateLoad(DeviceAAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    Value *TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
+    Value *PointerToTIDthElementOfDeviceA =
+        Builder.CreateInBoundsGEP(DeviceAPointer, TID64Bit);
+    Value *TIDthElementOfDeviceA =
+        Builder.CreateLoad(PointerToTIDthElementOfDeviceA);
+
+    Value *DeviceBPointer = Builder.CreateLoad(DeviceBAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
+    Value *PointerToTIDthElementOfDeviceB =
+        Builder.CreateInBoundsGEP(DeviceBPointer, TID64Bit);
+    Value *TIDthElementOfDeviceB =
+        Builder.CreateLoad(PointerToTIDthElementOfDeviceB);
+
+    Value *DeviceADeviceBCMP =
+        Builder.CreateFCmpOEQ(TIDthElementOfDeviceA, TIDthElementOfDeviceB);
+    Builder.CreateCondBr(DeviceADeviceBCMP, SecondIfBlock, ElseBlock);
+
+    Builder.SetInsertPoint(SecondIfBlock);
+
+    DeviceAPointer = Builder.CreateLoad(DeviceAAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
+    PointerToTIDthElementOfDeviceA =
+        Builder.CreateInBoundsGEP(DeviceAPointer, TID64Bit);
+    TIDthElementOfDeviceA = Builder.CreateLoad(PointerToTIDthElementOfDeviceA);
+    Value *DeviceOutputPointer = Builder.CreateLoad(DeviceOutputAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
+    Value *PointerToTIDthElementOfDeviceOutput =
+        Builder.CreateInBoundsGEP(DeviceOutputPointer, TID64Bit);
+    Builder.CreateStore(TIDthElementOfDeviceA,
+                        PointerToTIDthElementOfDeviceOutput);
+
+    Builder.CreateBr(TailBlock);
+
+    Builder.SetInsertPoint(ElseBlock); // Burası Else
+    Value *DeviceCPointer = Builder.CreateLoad(DeviceCAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
+    Value *PointerToTIDthElementOfDeviceC =
+        Builder.CreateInBoundsGEP(DeviceCPointer, TID64Bit);
+    Value *TIDthElementOfDeviceC =
+        Builder.CreateLoad(PointerToTIDthElementOfDeviceC);
+    DeviceOutputPointer = Builder.CreateLoad(DeviceOutputAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
+    PointerToTIDthElementOfDeviceOutput =
+        Builder.CreateInBoundsGEP(DeviceOutputPointer, TID64Bit);
+    Builder.CreateStore(TIDthElementOfDeviceC,
+                        PointerToTIDthElementOfDeviceOutput);
+    Builder.CreateBr(TailBlock);
+
+    Builder.SetInsertPoint(TailBlock);
+
+    Annotations->addOperand(MDNode::concatenate(
+        MDNode::get(Context, ValueAsMetadata::get(MajorityVotingFunction)), Con));
+
+    Builder.CreateRetVoid();
+    return MajorityVotingFunction;
   }
+
 
   bool runOnModule(Module &M) override {
 
@@ -109,6 +268,7 @@ struct RMTv2Device : public ModulePass {
       Value *One32Bit = ConstantInt::get(Int32Type, 1);
       Value *Two32Bit = ConstantInt::get(Int32Type, 2);
       Function* BlockIDX = M.getFunction("llvm.nvvm.read.ptx.sreg.ctaid.x");
+      Function* BlockIDY = M.getFunction("llvm.nvvm.read.ptx.sreg.ctaid.y");
 
      for(unsigned int Index = 0; Index < Annotations->getNumOperands(); Index++){
         MDNode* Operand = Annotations->getOperand(Index);
@@ -160,41 +320,66 @@ struct RMTv2Device : public ModulePass {
         User* FirstUser =  Output->uses().begin()->getUser();
         StoreInst* OutputStore = dyn_cast<StoreInst>(FirstUser);
         AllocaInst* OutputAllocation = dyn_cast<AllocaInst>(OutputStore->getPointerOperand());
-        errs() << *OutputAllocation << "\n";
-        IRBuilder<> Builder(OutputAllocation->getNextNode());
-        Instruction* TempRedundant = Builder.CreateAlloca(PossibleOutputType,nullptr, "TempRedundant");  
-        OutputAllocation->replaceAllUsesWith(TempRedundant);
-        
 
-        Builder.CreateStore(Output,OutputAllocation );
-        Instruction* FirstRedundant =  Builder.CreateAlloca(PossibleOutputType,nullptr, "FirstRedundant");  
-        Instruction* SecondRedundant =  Builder.CreateAlloca(PossibleOutputType,nullptr, "SecondRedundant");
-        Value* OriginalXAddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalX.addr");
-        Value* OriginalYAddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalY.addr");
-        
-
-        Instruction* BlockIdaddr =  Builder.CreateAlloca(Int32Type,nullptr, "BlockIdaddr");
-        Instruction* BlockIdaddr2 =  Builder.CreateAlloca(Int32Type,nullptr, "BlockIdaddr2");
-        
-        std::pair<StoreInst*, CallInst*>  Pair = getTheXID(NewKernelFunction);
-        StoreInst* XID = Pair.first;
-        errs() << *Pair.first << "\n";
-        errs() << *Pair.second << "\n";
-        
+       BasicBlock* FirstBB = dyn_cast<BasicBlock>(NewKernelFunction->begin());
+       
+       Instruction& LastInstruction = FirstBB->front();
 
         Function::arg_iterator Args = NewKernelFunction->arg_end();
         Args--;
         Value *OriginalY = Args--;
         Value *OriginalX = Args--;
+        Value *SecondRedundantArg = Args--;   
         Value *FirstRedundantArg = Args--;
-        Value *SecondRedundantArg = Args--;        
+        Value *OriginalOutput = Args--;
+        std::string ValueName = OriginalOutput->getName().str();
+        FirstRedundantArg->setName(ValueName + "1");
+        SecondRedundantArg->setName(ValueName + "2");
+        OriginalX->setName("OriginalBlockX");
+        OriginalY->setName("OriginalY");   
+
+        IRBuilder<> Builder(OutputAllocation->getNextNode());
+
+        Instruction* FirstRedundant =  Builder.CreateAlloca(PossibleOutputType,nullptr, "FirstRedundant");  
+        Instruction* SecondRedundant =  Builder.CreateAlloca(PossibleOutputType,nullptr, "SecondRedundant");
+        Value* OriginalXAddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalX.addr");
+        Value* OriginalYAddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalY.addr");
 
         Builder.CreateStore(OriginalX, OriginalXAddr);
         Builder.CreateStore(FirstRedundantArg, FirstRedundant);
         Builder.CreateStore(SecondRedundantArg, SecondRedundant);
-        Builder.CreateStore(OriginalY, OriginalYAddr);
+        Builder.CreateStore(OriginalY, OriginalYAddr);  
+
+        //errs() << *OutputAllocation << "\n";
+        //IRBuilder<> Builder(OutputAllocation->getNextNode());
+        Instruction* TempRedundant = Builder.CreateAlloca(PossibleOutputType,nullptr, "TempRedundant");  
+        OutputAllocation->replaceAllUsesWith(TempRedundant);
         
+
+        Builder.CreateStore(Output,OutputAllocation );
+        
+
+        Instruction* BlockIdaddr =  Builder.CreateAlloca(Int32Type,nullptr, "BlockIdaddr");
+        Instruction* BlockIdaddr2 =  Builder.CreateAlloca(Int32Type,nullptr, "BlockIdaddr2");
+        Instruction* BlockIdaddrY =  Builder.CreateAlloca(Int32Type,nullptr, "BlockIdaddrY");
+        
+
+        
+  
+        Value* BlockIDYCall;
+         Value* BlockYID2 ;
         Value* BlockIDXCall = Builder.CreateCall(BlockIDX);
+        /*
+        if(BlockIDY != nullptr){
+        BlockIDYCall = Builder.CreateCall(BlockIDY);
+        BlockYID2 = Builder.CreateURem(
+            BlockIDYCall,
+            Builder.CreateLoad(OriginalYAddr)
+         );
+        Builder.CreateStore(BlockYID2, BlockIdaddrY);
+
+         changeYID(NewKernelFunction, Builder.CreateLoad(BlockIdaddrY));
+        }*/
     
         Value* BlockID = Builder.CreateUDiv(
             BlockIDXCall,
@@ -203,14 +388,21 @@ struct RMTv2Device : public ModulePass {
 
         BlockID->setName("BlockID");
         Builder.CreateStore(BlockID, BlockIdaddr);
+
         Value* BlockID2 = Builder.CreateURem(
             BlockIDXCall,
             Builder.CreateLoad(OriginalXAddr)
          );
          BlockID2->setName("BlockID2");
         Builder.CreateStore(BlockID2, BlockIdaddr2);
-/*
+      
+         StoreInst*  I =  getTheXID(NewKernelFunction);
 
+      
+        errs() << *I << "\n";
+
+
+/*
             Function *a;
     Value *b;
     Value *c;
@@ -226,7 +418,7 @@ struct RMTv2Device : public ModulePass {
               a = callInstruction->getCalledFunction();
               b = callInstruction->getArgOperand(0);
               c = callInstruction->getArgOperand(1);
-              errs() << *callInstruction << "\n";
+              
               bitCast = dyn_cast<BitCastInst>(c);
               alInst = dyn_cast<AllocaInst>(bitCast->getOperand(0));
               d = alInst->getAllocatedType();
@@ -240,7 +432,7 @@ struct RMTv2Device : public ModulePass {
     }
     AllocaInst *printFAlloca = Builder.CreateAlloca(d->getScalarType());
      auto XX =  Builder.CreateInBoundsGEP(printFAlloca, {ConstantInt::get(Type::getInt32Ty(Context),0),ConstantInt::get(Type::getInt32Ty(Context),0)});
-     Builder.CreateStore( BlockID, XX);
+     Builder.CreateStore( Builder.CreateLoad(BlockIdaddr), XX);
         Builder.CreateCall(
             M.getFunction("vprintf"),
             {Builder.CreateGlobalStringPtr("%d \n"),
@@ -251,10 +443,10 @@ struct RMTv2Device : public ModulePass {
 
 */
 
+         changeXID(NewKernelFunction,BlockIDXCall,BlockIdaddr2, Builder);
 
 
-
-         changeXID(NewKernelFunction, Builder.CreateLoad(BlockIdaddr2));
+         
         Builder.SetInsertPoint(OutputStore->getNextNode());
         BlockID = Builder.CreateLoad(BlockIdaddr);
         Instruction* ZeroCmp = dyn_cast<Instruction>(Builder.CreateICmpEQ(BlockID, Zero32Bit));
@@ -281,17 +473,23 @@ struct RMTv2Device : public ModulePass {
         Builder.CreateStore(Builder.CreateLoad(SecondRedundant), TempRedundant);
 
 
-
         MDNode *N = MDNode::get(Context, MDString::get(Context, "kernel"));
         MDNode *TempN = MDNode::get(Context, ConstantAsMetadata::get(ConstantInt::get(Int32Type, 1)));
         MDNode *Con = MDNode::concatenate(N, TempN);
         Annotations->addOperand(MDNode::concatenate(MDNode::get(Context, ValueAsMetadata::get(NewKernelFunction)), Con));
 
+      FunctionCallee MajorityVotingCallee = M.getOrInsertFunction(
+          "majorityVoting15", Type::getVoidTy(Context),
+          Type::getFloatPtrTy(Context), Type::getFloatPtrTy(Context),
+          Type::getFloatPtrTy(Context), Type::getFloatPtrTy(Context),
+          Type::getInt64Ty(Context)
+
+      );
+      createMajorityFuncton(M,MajorityVotingCallee );
+
+
         //Builder.CreateStore(Builder.CreateLoad(FirstRedundant), TempRedundant);
-        /*
-     
-        }
-     */
+
      }
      }
 
@@ -371,7 +569,7 @@ struct RMTv2Host : public ModulePass {
                               ->getElementType();
       } else if (dyn_cast_or_null<AllocaInst>(
                      CudaMallocFunctionCall->getArgOperand(0)) != nullptr) {
-        ;
+        
         AllocaVariable =
             dyn_cast<AllocaInst>(CudaMallocFunctionCall->getArgOperand(0));
         DestinationType =
@@ -758,15 +956,40 @@ Value* findThreadY(BasicBlock* BB){
                 }
                }
           }
+ }
 }
 
 
+void ReMemCpy( IRBuilder<> Builder, std::string VariableName, Instruction* NewOutput, std::vector<CallInst *> CudaMemcpyFunctionCalls){
+  for(size_t Index = 0; Index < CudaMemcpyFunctionCalls.size(); Index++){
+    CallInst* MemCpy = CudaMemcpyFunctionCalls.at(Index);
+    BitCastInst* Destination = dyn_cast<BitCastInst>(MemCpy->getArgOperand(0));
+    LoadInst* LoadDestination =  dyn_cast<LoadInst>(Destination->getOperand(0));
+    AllocaInst* AllocationDestination =  dyn_cast<AllocaInst>(LoadDestination->getOperand(0));
+    StringRef AllocatedVariableName =  AllocationDestination->getName();
+    if(AllocatedVariableName == VariableName){
+      errs() << *MemCpy << "\n";
+      errs() << *NewOutput << "\n";
+      Value* Source =  dyn_cast<BitCastInst>(MemCpy->getArgOperand(1));
+      CallInst* Cloned = dyn_cast<CallInst>(MemCpy->clone());
+      Value* LoadedNewOutput = Builder.CreateLoad(NewOutput);
+      Value* BitCasted = 
+      Builder.CreateBitCast(LoadedNewOutput, Destination->getDestTy());
+
+      Cloned->setArgOperand(0, BitCasted
+      );
+      Cloned->insertAfter(dyn_cast<Instruction>(BitCasted));
+      break;
+    }
+  }
+
+
+
 }
+
+
 struct CudaConfigurations findConfigurationCall(BasicBlock* BB){
       struct CudaConfigurations Confg;
-      errs() << "BURADA\n";
-      Value* ThreadX = findThreadX(BB);
-      Value* ThreadY = findThreadY(BB);
       Function* MainFunction = BB->getParent();
       Type* Int32Type = Type::getInt32Ty(BB->getContext());
         for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
@@ -806,7 +1029,6 @@ struct CudaConfigurations findConfigurationCall(BasicBlock* BB){
                                     if( CallInst* FuncCall =  dyn_cast<CallInst>(CurrentInstruction3 )){
                                         StringRef FunctionName = FuncCall->getCalledFunction()->getName();
                                         if(FunctionName.contains("dim3") == true) {
-                                      errs() << *FuncCall << "\n";
                                         if( FuncCall->getArgOperand(0) ==  DestinationAllocation){
                                           Value* GridX = FuncCall->getArgOperand(1);
                                           Value* GridY = FuncCall->getArgOperand(2);
@@ -815,13 +1037,11 @@ struct CudaConfigurations findConfigurationCall(BasicBlock* BB){
 
                                           IRBuilder<> Builder(GridXAsInstruction->getNextNode());
                                           Constant *Three = ConstantInt::get(Int32Type, 3);
-                                          Value* OriginalX = Builder.CreateMul(ThreadX, GridX);
-                                          Confg.OriginalX = OriginalX;
+                                          Confg.OriginalX = GridX;
                                           FuncCall->setArgOperand(1, Builder.CreateMul(GridXAsInstruction, Three));
                                           if(GridYAsInstruction != nullptr)
                                           Builder.SetInsertPoint(GridYAsInstruction->getNextNode());
-                                          Value* OriginalY = Builder.CreateMul(ThreadY, GridY);
-                                          Confg.OriginalY = OriginalY;
+                                          Confg.OriginalY = GridY;
                                           break;
                                         }
                                       }}
@@ -844,20 +1064,22 @@ return Confg;
 }
 
   bool runOnModule(Module &M) override {
-
     CallInst* Cuda;
 
       struct CudaConfigurations Confg;
     Function *CudaMalloc = M.getFunction("cudaMalloc");
+    Function *CudaMemCpy = M.getFunction("cudaMemcpy");
     LLVMContext& Context = M.getContext();
     Type* Int32Type = Type::getInt32Ty(Context);
     Type* Int64Type = Type::getInt64Ty(Context);
     Type* VoidType = Type::getVoidTy(Context);
     std::vector<CallInst *> CudaMallocFunctionCalls;
+    std::vector<CallInst *> CudaMemcpyFunctionCalls;
       Value *One32Bit = ConstantInt::get(Int32Type, 1);
-      Value *Zero32Bit = ConstantInt::get(Int32Type, 0);
+      Value *Zero32Bit = ConstantInt::get(Int32Type, 0);  
 
     Function *ConfigureFunction = M.getFunction("cudaConfigureCall");
+    
 
     Function *Sync = M.getFunction("cudaThreadSynchronize");
     std::vector<Value *> CreatedOutputs; // GERI TAŞI
@@ -913,11 +1135,16 @@ return Confg;
                         Builder, SizeOfTheOutput.second.first,
                         SizeOfTheOutput.second.second);
                      CreatedOutputs.push_back(NewOutput);
-                     }
-                    // FIX ME!!!!!!!
-                    CreatedOutputs.push_back(One32Bit); //PROBLEM!!!
-                    CreatedOutputs.push_back(Confg.OriginalY);
 
+                    // ReMemCpy(Builder,VariableName,dyn_cast<Instruction>(NewOutput), CudaMemcpyFunctionCalls);
+                     }
+                     
+
+
+
+
+                    CreatedOutputs.push_back(Confg.OriginalX ); 
+                    CreatedOutputs.push_back(Confg.OriginalY);
                     for(int I =  CreatedOutputs.size() - 4; I < CreatedOutputs.size() - 2 ; I++){
                       CreatedOutputs.at(I) = Builder.CreateLoad(CreatedOutputs.at(I));
                     }
@@ -926,6 +1153,9 @@ return Confg;
 
 
                     Builder.SetInsertPoint(FunctionCall);
+                    //Function *F = M.getFunction("_Z16majorityVoting15PfS_S_");
+                    //Builder.CreateCall(F, {CreatedOutputs.at(CreatedOutputs.size()-3), CreatedOutputs.at(CreatedOutputs.size()-4), CreatedOutputs.at(CreatedOutputs.size()-5)});
+
                    Instruction* NewFunctionCall = Builder.CreateCall(NewKernelAsCallee, CreatedOutputs);
                    /*
                     errs() << *FunctionCall->getArgOperand(ParamSize-1) << "\n";
@@ -975,7 +1205,7 @@ return Confg;
 
                     Type *TypeOfOutput = SizeOfTheOutput.second.first;
                              
-                    Function *Majority = M.getFunction("_Z16majorityVoting15PfS_S_");
+                    Function *Majority = M.getFunction("majorityVoting15");
 
                     if (Majority == nullptr)
                     Majority = createMajorityVoting(M, dyn_cast<PointerType>(TypeOfOutput));
@@ -990,23 +1220,24 @@ return Confg;
                         )); // A
                     Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 4))->getOperand(0)));
                     Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 3))->getOperand(0)));
-            /*
+          
                     Args.push_back(
                       Builder.CreateLoad(
                         dyn_cast<Instruction>(dyn_cast<CallInst>(NewFunctionCall)->getArgOperand(ParamSize-1))->getOperand(0)
 
                         )); // A
-                    Args.push_back( SizeOfTheOutput.first);
+                    Args.push_back( Builder.CreateUDiv(SizeOfTheOutput.first, ConstantInt::get(Int64Type, 4)));
 
-                    errs() << *Majority << "\n";*/
-                  Builder.CreateCall(Majority, Args);
+
+                 Builder.CreateCall(Majority, Args);
 
                   //Builder.CreateCall(F, Args);
 
                 CurrentInstruction++;
                 CurrentInstruction++;
 
-            }else if (FunctionName == "cudaConfigureCall") {
+            }else if (FunctionName == "cudaMemcpy") {
+              CudaMemcpyFunctionCalls.push_back(FunctionCall);
 
             }else if (FunctionName.contains("cudaMalloc")) {
               CudaMallocFunctionCalls.push_back(FunctionCall);
