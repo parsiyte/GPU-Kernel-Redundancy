@@ -558,31 +558,25 @@ struct RMTv2Host : public ModulePass {
 
   std::pair<Value *, std::pair<Type *, Type *>>
   getSizeofDevice(std::vector<CallInst *> CudaMallocFunctionCalls,
-                  std::string Output) {
+                  std::string Output, IRBuilder<> *Builder) {
     Value *Size = nullptr;
     std::pair<Type *, Type *> Types;
     for (size_t Index = 0; Index < CudaMallocFunctionCalls.size(); Index++) {
       CallInst *CudaMallocFunctionCall = CudaMallocFunctionCalls.at(Index);
       AllocaInst *AllocaVariable = nullptr;
       Type *DestinationType = nullptr;
-      if (BitCastInst *BitCastVariable =
-              dyn_cast<BitCastInst>(CudaMallocFunctionCall->getArgOperand(0))) {
+      if (BitCastInst *BitCastVariable = dyn_cast<BitCastInst>(CudaMallocFunctionCall->getArgOperand(0))) {
         AllocaVariable = dyn_cast<AllocaInst>(BitCastVariable->getOperand(0));
-        DestinationType = dyn_cast<PointerType>(BitCastVariable->getDestTy())
-                              ->getElementType();
-      } else if (dyn_cast_or_null<AllocaInst>(
-                     CudaMallocFunctionCall->getArgOperand(0)) != nullptr) {
-        
-        AllocaVariable =
-            dyn_cast<AllocaInst>(CudaMallocFunctionCall->getArgOperand(0));
-        DestinationType =
-            dyn_cast<PointerType>(AllocaVariable->getAllocatedType());
+        DestinationType = dyn_cast<PointerType>(BitCastVariable->getDestTy())->getElementType();
+      } else if (dyn_cast_or_null<AllocaInst>(CudaMallocFunctionCall->getArgOperand(0)) != nullptr) {
+        AllocaVariable = dyn_cast<AllocaInst>(CudaMallocFunctionCall->getArgOperand(0));
+        DestinationType = dyn_cast<PointerType>(AllocaVariable->getAllocatedType());
       }
       std::string VariableName = AllocaVariable->getName().str();
       if (VariableName == Output) {
+        Builder->SetInsertPoint(CudaMallocFunctionCall);
         Size = CudaMallocFunctionCall->getArgOperand(1);
-        Types =
-            std::make_pair(AllocaVariable->getAllocatedType(), DestinationType);
+        Types =std::make_pair(AllocaVariable->getAllocatedType(), DestinationType);
         break;
       }
     }
@@ -603,6 +597,7 @@ struct RMTv2Host : public ModulePass {
         Builder.CreateBitCast(Allocated, DestinationType->getPointerTo());
     Builder.CreateCall(Callee, {SecondReplicationCasted, Size});
     // Builder.CreateLoad(Allocated);
+    
     return Allocated;
   }
 
@@ -1068,7 +1063,7 @@ struct CudaConfigurations findConfigurationCall(BasicBlock* BB){
                 }
                }
           }
-}
+ } 
 
 return Confg;
 }
@@ -1078,7 +1073,9 @@ return Confg;
 
       struct CudaConfigurations Confg;
     Function *CudaMalloc = M.getFunction("cudaMalloc");
+    Function *CudaFree = M.getFunction("cudaFree");
     LLVMContext& Context = M.getContext();
+    Type* Int8PtrType = Type::getInt8PtrTy(Context);
     Type* Int32Type = Type::getInt32Ty(Context);
     Type* Int64Type = Type::getInt64Ty(Context);
     Type* VoidType = Type::getVoidTy(Context);
@@ -1139,20 +1136,16 @@ return Confg;
                           LoadInst* LoadedArg =  dyn_cast<LoadInst>(FunctionCall->getArgOperand(i));
                           CreatedOutputs.push_back(LoadedArg);
                         }
-                    Builder.SetInsertPoint(Cuda->getPrevNode());
                     for(int i = 0; i < 2; i++){
-                    for (size_t Index = 0; Index < Outputs.size(); Index++) {
-                    std::string VariableName = Outputs[Index];
-                    SizeOfTheOutput =
-                        getSizeofDevice(CudaMallocFunctionCalls, VariableName);
-                    Value *NewOutput = createAndAllocateVariable(
-                        CudaMalloc, VariableName, SizeOfTheOutput.first,
-                        Builder, SizeOfTheOutput.second.first,
-                        SizeOfTheOutput.second.second);
-                     CreatedOutputs.push_back(NewOutput);
+                        for (size_t Index = 0; Index < Outputs.size(); Index++) {
+                        std::string VariableName = Outputs[Index];
+                        SizeOfTheOutput = getSizeofDevice(CudaMallocFunctionCalls, VariableName, &Builder);
+                        Value *NewOutput = createAndAllocateVariable( CudaMalloc, VariableName, SizeOfTheOutput.first, Builder, SizeOfTheOutput.second.first, SizeOfTheOutput.second.second);
+                        CreatedOutputs.push_back(NewOutput);
+                    Builder.SetInsertPoint(Cuda->getPrevNode());
 
-                    reMemCpy(Builder,VariableName,dyn_cast<Instruction>(NewOutput), CudaMemcpyFunctionCalls);
-                     }
+                        reMemCpy(Builder,VariableName,dyn_cast<Instruction>(NewOutput), CudaMemcpyFunctionCalls);
+                        }
                      }
 
                      
@@ -1226,7 +1219,7 @@ return Confg;
                     Function *Majority = M.getFunction("majorityVoting15");
 
                     if (Majority == nullptr)
-                    Majority = createMajorityVoting(M, dyn_cast<PointerType>(TypeOfOutput));
+                     Majority = createMajorityVoting(M, dyn_cast<PointerType>(TypeOfOutput));
 
                     std::vector<Value *> Args;
 
@@ -1248,6 +1241,11 @@ return Confg;
 
 
                   Builder.CreateCall(Majority, Args);
+
+                //  errs() << *CudaFree << "\n";
+                //  Builder.CreateCall(CudaFree, {Builder.CreateBitCast(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 4))->getOperand(0)), Int8PtrType)});      
+                //  Builder.CreateCall(CudaFree, {Builder.CreateBitCast(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 3))->getOperand(0)), Int8PtrType)});                  
+                  //Builder.CreateCall(CudaFree, {Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 3))->getOperand(0))});
 
                   //Builder.CreateCall(F, Args);
 
