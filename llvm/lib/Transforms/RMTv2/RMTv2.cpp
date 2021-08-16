@@ -1142,7 +1142,7 @@ return Confg;
                         SizeOfTheOutput = getSizeofDevice(CudaMallocFunctionCalls, VariableName, &Builder);
                         Value *NewOutput = createAndAllocateVariable( CudaMalloc, VariableName, SizeOfTheOutput.first, Builder, SizeOfTheOutput.second.first, SizeOfTheOutput.second.second);
                         CreatedOutputs.push_back(NewOutput);
-                    Builder.SetInsertPoint(Cuda->getPrevNode());
+                         Builder.SetInsertPoint(Cuda->getPrevNode());
 
                         reMemCpy(Builder,VariableName,dyn_cast<Instruction>(NewOutput), CudaMemcpyFunctionCalls);
                         }
