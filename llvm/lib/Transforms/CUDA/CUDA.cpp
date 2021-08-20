@@ -47,11 +47,10 @@
 #include <utility>
 #include <vector>
 using namespace llvm;
-#define ArgumanOrder                                                           \
-  1 // Cuda Register Fonksiyonu çağrılırken 1 arguman fonksiyonu veriyor.
+#define ArgumanOrder 1 // Cuda Register Fonksiyonu çağrılırken 1 arguman fonksiyonu veriyor.
     // Gelecek Cuda versiyonlarında değişme ihtimaline karşı en üste tanımladık.
 #define NumberOfReplication 3
-#define STREAMENABLED true
+#define STREAMENABLED false
 
 namespace {
 
@@ -675,7 +674,6 @@ struct Output {
 
 void parseOutput(std::vector<CallInst *> CudaMallocFunctionCalls, Output* SingleOutput){
   std::string VariableName = SingleOutput->Name;
-  errs() << VariableName << "\n";
   AllocaInst *AllocaVariable = nullptr;
   Type *DestinationType = nullptr;
   for (size_t Index = 0; Index < CudaMallocFunctionCalls.size(); Index++) {
@@ -695,8 +693,6 @@ void parseOutput(std::vector<CallInst *> CudaMallocFunctionCalls, Output* Single
         SingleOutput->MallocInstruction = CudaMallocFunctionCall;
         break;
       }
-
-
   }
 
 }
@@ -720,10 +716,6 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
     BitcastedCloned = Builder.CreateBitCast(Builder.CreateLoad(NewAllocated), DestinationType->getPointerElementType());
     Value* LoadedOutput = Builder.CreateLoad(OutputToReplicateAllocation);
     Value* BitcastedOutput = Builder.CreateBitCast(LoadedOutput, DestinationType->getPointerElementType());
-    errs() << *BitcastedCloned << "\n";
-    errs() << *BitcastedOutput << "\n";
-    errs() << *Size << "\n";
-    errs() << *Three32Bit << "\n";
     Builder.CreateCall(CudaMemcpy, {BitcastedCloned, BitcastedOutput, Size, Three32Bit});
     OutputToReplicate->Replications.push_back(NewAllocated);
   }
@@ -732,14 +724,11 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
 
 
   bool runOnModule(Module &M) override {
-    Function *CudaMalloc = M.getFunction("cudaMalloc");
-    Function *ConfigureFunction = M.getFunction("cudaConfigureCall");
     Function *CudaMemCpy = M.getFunction("cudaMemcpy");
     StringRef StreamCreateFunctionName = "cudaStreamCreateWithFlags";
     FunctionCallee StreamCreateFunction = nullptr;
     CallInst *ConfigurationCall;
     LLVMContext &Context = M.getContext();
-    Type *Int64Type = Type::getInt64Ty(Context);
     Type *Int32Type = Type::getInt32Ty(Context);
     Value *Zero32bit = ConstantInt::get(Int32Type, 0);
     Value *One32Bit = ConstantInt::get(Int32Type, 1);
@@ -873,17 +862,6 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
 
                 }
                 
-            
-
-
-              
-
-
-
-
-
-
-
 
             } else if (FunctionName.contains("cudaMalloc")) {
               CudaMallocFunctionCalls.push_back(FunctionCall);

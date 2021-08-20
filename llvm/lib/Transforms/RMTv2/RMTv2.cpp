@@ -51,8 +51,9 @@
 #include <vector>
 #include "llvm/Transforms/Utils/Cloning.h"
 using namespace llvm;
-#define Replication 3
+#define NumberOfReplication 3
 #define NumberofDimension 2
+#define RevisitedSuffix "Revisited"
 
 namespace {
 struct RMTv2Device : public ModulePass {
@@ -296,7 +297,7 @@ struct RMTv2Device : public ModulePass {
         for(unsigned int SIndex = 0; SIndex < ArgumanCount; SIndex++ ){
           NewFunctionType.push_back(KernelType->getParamType(SIndex));
         }
-        for(int OutputIndex = 0; OutputIndex < Replication - 1; OutputIndex++){
+        for(int OutputIndex = 0; OutputIndex < NumberOfReplication - 1; OutputIndex++){
           NewFunctionType.push_back(PossibleOutputType);
         }
         for(int Dimension = 0; Dimension < NumberofDimension; Dimension++ ){
@@ -507,7 +508,7 @@ struct RMTv2Host : public ModulePass {
   struct CudaConfigurations{
     Value* OriginalX;
     Value* OriginalY;
-    CallInst* ConfigCall;
+    CallInst* ConfigurationCall;
 
   };
   RMTv2Host() : ModulePass(ID) {}
@@ -601,98 +602,7 @@ struct RMTv2Host : public ModulePass {
     return Allocated;
   }
 
-  Function *createRevisted(Module &M,std::string FunctionName,FunctionCallee RevistedFunctionCallee) {
-    // std::to_string(RevistedPointerType->getTypeID());
 
-    Function *CudaRegisterFunction = M.getFunction("__cuda_register_globals");
-    Function *CudaRegisterFunction2 = M.getFunction("__cudaRegisterFunction");
-    Function *CudaSetupArgument = M.getFunction("cudaSetupArgument");
-
-    Function *CudaLaunch = M.getFunction("cudaLaunch");
-
-    LLVMContext &Context = M.getContext();
-    Type *Int64Type = Type::getInt64Ty(Context);
-    Type *Int32Type = Type::getInt32Ty(Context);
-    Type *FloatType = Type::getFloatTy(Context);
-    Value *Zero32Bit = ConstantInt::get(Int32Type, 0);
-    PointerType *Int8PtrType = Type::getInt8PtrTy(Context);
-    PointerType *Int32PtrType = Type::getInt32PtrTy(Context);
-
-    std::vector<Value *> Parameters;
-
-    Function *RevistedFunction =
-        dyn_cast<Function>(RevistedFunctionCallee.getCallee());
-    RevistedFunction->setCallingConv(CallingConv::C);
-    Function::arg_iterator Args = RevistedFunction->arg_begin();
-
-     BasicBlock *EntryBlock =
-        BasicBlock::Create(Context, "entry", RevistedFunction);
-
-    IRBuilder<> Builder(EntryBlock);
-
-    Builder.SetInsertPoint(EntryBlock);
-    int Offset = 0;
-    int SizeParameter = 8;
-    while(Args != RevistedFunction->arg_end()){
-      Value* Arguman = Args++;
-      Type* ArgumanType = Arguman->getType();
-      if (ArgumanType == Int32PtrType || ArgumanType == Int32Type || ArgumanType == FloatType)
-        SizeParameter = 4;
-      else
-        SizeParameter = 8; // Diğerleri pointer olduğu için herhalde. Char*,
-                           // float*, int* aynı çıktı.
-      MaybeAlign ArgumanAlign = MaybeAlign(SizeParameter);
-      AllocaInst* ArgumanPointer = Builder.CreateAlloca(ArgumanType, nullptr, "Arguman.addr");
-      ArgumanPointer->setAlignment(ArgumanAlign);
-      Builder.CreateStore(Arguman, ArgumanPointer);
-      Parameters.push_back(ArgumanPointer);
-      Value *BitcastParameter = Builder.CreateBitCast(ArgumanPointer, Int8PtrType);
-      while(Offset%SizeParameter != 0)
-        Offset += 1;
-      Value *OffsetValue = ConstantInt::get(Int64Type, Offset);
-
-       Value *SizeValue = ConstantInt::get(Int64Type, SizeParameter);
-      Value *CudaSetupArgumentCall = Builder.CreateCall(
-          CudaSetupArgument, {BitcastParameter, SizeValue, OffsetValue});
-      Instruction *IsError = dyn_cast<Instruction>(
-          Builder.CreateICmpEQ(CudaSetupArgumentCall, Zero32Bit));
-      if (Offset == 0)
-        Builder.CreateRetVoid(); // Buraya daha akıllıca çözüm bulmak gerekiyor.
-                                 // Sevimli gözükmüyor.
-
-      Instruction *SplitPoint =
-          SplitBlockAndInsertIfThen(IsError, IsError->getNextNode(), false);
-
-      SplitPoint->getParent()->setName("setup.next");
-
-      Builder.SetInsertPoint(SplitPoint);
-      Offset += SizeParameter;
-    }
-
-    Builder.CreateCall(CudaLaunch, {Builder.CreateBitCast(
-                                       RevistedFunction, Int8PtrType)});
-
-    BasicBlock *CudaRegisterBlock =
-        dyn_cast<BasicBlock>(CudaRegisterFunction->begin());
-    Instruction *FirstInstruction =
-        dyn_cast<Instruction>(CudaRegisterBlock->begin());
-    Builder.SetInsertPoint(FirstInstruction);
-
-    Value *FunctionNameString =
-        Builder.CreateGlobalStringPtr(FunctionName);
-    Builder.CreateCall(
-        CudaRegisterFunction2,
-        {FirstInstruction->getOperand(0),
-         Builder.CreateBitCast(RevistedFunction, Int8PtrType),
-         FunctionNameString, FunctionNameString, ConstantInt::get(Int32Type, -1),
-         ConstantPointerNull::get(Int8PtrType),
-         ConstantPointerNull::get(Int8PtrType),
-         ConstantPointerNull::get(Int8PtrType),
-         ConstantPointerNull::get(Int8PtrType),
-         ConstantPointerNull::get(Int32PtrType)});
-
-    return RevistedFunction;
-  }
 
 
   Function *createMajorityVoting(Module &M,
@@ -986,7 +896,7 @@ void reMemCpy( IRBuilder<> Builder, std::string VariableName, Instruction* NewOu
 
 
 struct CudaConfigurations findConfigurationCall(BasicBlock* BB){
-      struct CudaConfigurations Confg;
+      struct CudaConfigurations Configurations;
       Function* MainFunction = BB->getParent();
       Type* Int32Type = Type::getInt32Ty(BB->getContext());
         for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
@@ -995,7 +905,7 @@ struct CudaConfigurations findConfigurationCall(BasicBlock* BB){
                if(FunctionName == "cudaConfigureCall"){
                 LoadInst* GridLoadInstr = dyn_cast_or_null<LoadInst>(FunctionCall->getArgOperand(0)); // 0 Grid X oluyor
 
-               Confg.ConfigCall = FunctionCall;
+               Configurations.ConfigurationCall = FunctionCall;
                 GetElementPtrInst* GEPS =  dyn_cast_or_null<GetElementPtrInst>(GridLoadInstr->getPointerOperand()); // Grid {i64, i32} şekilde bir struct.
                 AllocaInst* GridAlloca = dyn_cast_or_null<AllocaInst>(GEPS->getPointerOperand()); // Grid'in alloca instruction'ı
                 for (Use& U : GridAlloca->uses()) {
@@ -1036,11 +946,11 @@ struct CudaConfigurations findConfigurationCall(BasicBlock* BB){
                                                 Builder.SetInsertPoint(GridXAsInstruction->getNextNode());
 
                                             Constant *Three = ConstantInt::get(Int32Type, 3);
-                                            Confg.OriginalX = GridX;
+                                            Configurations.OriginalX = GridX;
                                             FuncCall->setArgOperand(1, Builder.CreateMul(GridX, Three));
                                             if(GridYAsInstruction != nullptr)
                                                 Builder.SetInsertPoint(GridYAsInstruction->getNextNode());
-                                            Confg.OriginalY = GridY;
+                                            Configurations.OriginalY = GridY;
 
     
                                             LLVMContext& C = FuncCall->getContext();
@@ -1063,208 +973,401 @@ struct CudaConfigurations findConfigurationCall(BasicBlock* BB){
                 }
                }
           }
- } 
+       } 
 
-return Confg;
+  return Configurations;
 }
 
-  bool runOnModule(Module &M) override {
-    CallInst* Cuda;
 
-      struct CudaConfigurations Confg;
+bool isForLoop(BasicBlock* PrevBB){
+    bool IsLoop = false;
+    while(PrevBB != nullptr){
+      StringRef BBName = PrevBB->getName();
+      IsLoop = BBName.contains("for");
+      if(IsLoop){
+        break;
+      }
+      PrevBB = PrevBB->getPrevNode();
+      
+    }
+    return IsLoop;
+}
+
+struct Output {
+  AllocaInst* OutputAllocation;
+  CallInst* MallocInstruction;
+  Type* OutputType;
+  Type* DestinationType;
+  std::string Name;
+  std::vector< Instruction *> Replications;
+};
+
+void parseOutput(std::vector<CallInst *> CudaMallocFunctionCalls, Output* SingleOutput){
+  std::string VariableName = SingleOutput->Name;
+  AllocaInst *AllocaVariable = nullptr;
+  Type *DestinationType = nullptr;
+  for (size_t Index = 0; Index < CudaMallocFunctionCalls.size(); Index++) {
+      CallInst *CudaMallocFunctionCall = CudaMallocFunctionCalls.at(Index);
+      Value* Operand = CudaMallocFunctionCall->getArgOperand(0);
+      if (BitCastInst *BitCastVariable = dyn_cast<BitCastInst>(Operand)) {
+        AllocaVariable = dyn_cast<AllocaInst>(BitCastVariable->getOperand(0));
+        DestinationType = dyn_cast<PointerType>(BitCastVariable->getDestTy());
+      }else if(dyn_cast_or_null<AllocaInst>(Operand) != nullptr){
+         AllocaVariable = dyn_cast<AllocaInst>(Operand);
+      }
+      std::string OutputName = AllocaVariable->getName().str();
+      if (VariableName == OutputName) {
+        SingleOutput->OutputAllocation = AllocaVariable;
+        SingleOutput->OutputType = AllocaVariable->getAllocatedType();
+        SingleOutput->DestinationType = DestinationType;
+        SingleOutput->MallocInstruction = CudaMallocFunctionCall;
+        break;
+      }
+  }
+
+}
+
+void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToReplicate, Instruction& LastInstructionOfPrevBB, FunctionCallee CudaMemcpy, bool IsLoop){
+  LLVMContext &Context = LastInstructionOfPrevBB.getContext();
+  Type *Int32Type = Type::getInt32Ty(Context);
+  Value* Three32Bit =  ConstantInt::get(Int32Type, 3);
+  AllocaInst* OutputToReplicateAllocation = OutputToReplicate->OutputAllocation;
+  Value* Size = OutputToReplicate->MallocInstruction->getArgOperand(1);
+  Type* OutputType = OutputToReplicate->OutputType;
+  Type* DestinationType = OutputToReplicate->DestinationType;
+  for(int Replication = 0; Replication < NumberOfReplication - 1; Replication++){
+    Builder.SetInsertPoint(OutputToReplicateAllocation->getNextNode());
+    Instruction* NewAllocated = Builder.CreateAlloca(OutputType, nullptr,  OutputToReplicate->Name);
+    Instruction* ClonedMalloc = OutputToReplicate->MallocInstruction->clone();
+    CallInst* Cloned = dyn_cast<CallInst>(ClonedMalloc);
+    Value* BitcastedCloned = Builder.CreateBitCast(NewAllocated, DestinationType);
+    Cloned->setArgOperand(0, BitcastedCloned);
+    Cloned->insertAfter(OutputToReplicate->MallocInstruction);
+    Builder.SetInsertPoint(&LastInstructionOfPrevBB); 
+    BitcastedCloned = Builder.CreateBitCast(Builder.CreateLoad(NewAllocated), DestinationType->getPointerElementType());
+    Value* LoadedOutput = Builder.CreateLoad(OutputToReplicateAllocation);
+    Value* BitcastedOutput = Builder.CreateBitCast(LoadedOutput, DestinationType->getPointerElementType());
+    Builder.CreateCall(CudaMemcpy, {BitcastedCloned, BitcastedOutput, Size, Three32Bit});
+    OutputToReplicate->Replications.push_back(NewAllocated);
+  }
+
+}
+
+  Function *createRevisted(Module &M,std::string FunctionName,FunctionCallee RevistedFunctionCallee) {
+    // std::to_string(RevistedPointerType->getTypeID());
+    LLVMContext &Context = M.getContext();
+    Type *Int64Type = Type::getInt64Ty(Context);
+    Type *Int32Type = Type::getInt32Ty(Context);
+    Type *FloatType = Type::getFloatTy(Context);
+    Value *Zero32Bit = ConstantInt::get(Int32Type, 0);
+    PointerType *Int8PtrType = Type::getInt8PtrTy(Context);
+    PointerType *Int32PtrType = Type::getInt32PtrTy(Context);
+
+    Function *CudaRegisterFunction = M.getFunction("__cuda_register_globals");
+    Function *CudaRegisterFunction2 = M.getFunction("__cudaRegisterFunction");
+    Function *CudaSetupArgument = M.getFunction("cudaSetupArgument");
+    ConstantPointerNull* Null8bitPtr = ConstantPointerNull::get(Int8PtrType);
+    ConstantPointerNull* Null32bitPtr = ConstantPointerNull::get(Int32PtrType);
+
+    Function *CudaLaunch = M.getFunction("cudaLaunch");
+
+
+    std::vector<Value *> Parameters;
+
+    Function *RevistedFunction =  dyn_cast<Function>(RevistedFunctionCallee.getCallee());
+    RevistedFunction->setCallingConv(CallingConv::C);
+    Function::arg_iterator Args = RevistedFunction->arg_begin();
+
+     BasicBlock *EntryBlock =
+        BasicBlock::Create(Context, "entry", RevistedFunction);
+
+    IRBuilder<> Builder(EntryBlock);
+
+    Builder.SetInsertPoint(EntryBlock);
+    int Offset = 0;
+    int SizeParameter = 8;
+    while(Args != RevistedFunction->arg_end()){
+      Value* Arguman = Args++;
+      Type* ArgumanType = Arguman->getType();
+      if (ArgumanType == Int32PtrType || ArgumanType == Int32Type || ArgumanType == FloatType)
+        SizeParameter = 4;
+      else
+        SizeParameter = 8; // Diğerleri pointer olduğu için herhalde. Char*,
+                           // float*, int* aynı çıktı.
+      MaybeAlign ArgumanAlign = MaybeAlign(SizeParameter);
+      AllocaInst* ArgumanPointer = Builder.CreateAlloca(ArgumanType, nullptr, "Arguman.addr");
+      ArgumanPointer->setAlignment(ArgumanAlign);
+      Builder.CreateStore(Arguman, ArgumanPointer);
+      Parameters.push_back(ArgumanPointer);
+      Value *BitcastParameter = Builder.CreateBitCast(ArgumanPointer, Int8PtrType);
+      while(Offset%SizeParameter != 0)
+        Offset += 1;
+      Value *OffsetValue = ConstantInt::get(Int64Type, Offset);
+
+       Value *SizeValue = ConstantInt::get(Int64Type, SizeParameter);
+      Value *CudaSetupArgumentCall = Builder.CreateCall(
+          CudaSetupArgument, {BitcastParameter, SizeValue, OffsetValue});
+      Instruction *IsError = dyn_cast<Instruction>(
+          Builder.CreateICmpEQ(CudaSetupArgumentCall, Zero32Bit));
+      if (Offset == 0)
+        Builder.CreateRetVoid(); // Buraya daha akıllıca çözüm bulmak gerekiyor.
+                                 // Sevimli gözükmüyor.
+
+      Instruction *SplitPoint =  SplitBlockAndInsertIfThen(IsError, IsError->getNextNode(), false);
+
+      SplitPoint->getParent()->setName("setup.next");
+
+      Builder.SetInsertPoint(SplitPoint);
+      Offset += SizeParameter;
+    }
+
+    Builder.CreateCall(CudaLaunch, {Builder.CreateBitCast(
+                                       RevistedFunction, Int8PtrType)});
+
+    BasicBlock *CudaRegisterBlock =
+        dyn_cast<BasicBlock>(CudaRegisterFunction->begin());
+    Instruction *FirstInstruction =
+        dyn_cast<Instruction>(CudaRegisterBlock->begin());
+    Builder.SetInsertPoint(FirstInstruction);
+
+    Value *FunctionNameString =
+        Builder.CreateGlobalStringPtr(FunctionName);
+    Builder.CreateCall(
+        CudaRegisterFunction2,
+        {FirstInstruction->getOperand(0),
+         Builder.CreateBitCast(RevistedFunction, Int8PtrType),
+         FunctionNameString, FunctionNameString, ConstantInt::get(Int32Type, -1),
+         Null8bitPtr ,Null8bitPtr,Null8bitPtr,Null8bitPtr, Null32bitPtr});
+
+    return RevistedFunction;
+  }
+
+
+
+FunctionType * getTheNewKernelType(FunctionType* OriginalFunctionType, std::vector<Output> Outputs){
+
+  FunctionType* NewKernelFunctionType;
+  size_t NumberOfArg =  OriginalFunctionType->getNumParams();
+  LLVMContext & Context = OriginalFunctionType->getContext();
+  Type* Int32Type = Type::getInt32Ty(Context);
+
+  std::vector<Type * > NewKernelTypes;
+  for(size_t ArgIndex = 0; ArgIndex < NumberOfArg; ArgIndex++){
+    NewKernelTypes.push_back(OriginalFunctionType->getFunctionParamType(ArgIndex));
+  }
+
+  for( Output SingleOutput : Outputs){
+     Type* SingleOutputType = SingleOutput.OutputType;
+     for(int TempIndex = 0; TempIndex < NumberOfReplication - 1; TempIndex++){
+       NewKernelTypes.push_back(SingleOutputType);
+     }
+  }
+
+  for(int DimensionIndex = 0; DimensionIndex < NumberofDimension; DimensionIndex++){
+    NewKernelTypes.push_back(Int32Type);
+  }
+
+  NewKernelFunctionType = FunctionType::get(OriginalFunctionType->getReturnType(), NewKernelTypes, true); 
+  
+  return NewKernelFunctionType;
+}
+
+
+
+  bool runOnModule(Module &M) override {
+    CallInst *ConfigurationCall;
+
+    struct CudaConfigurations Configurations;
     Function *CudaMalloc = M.getFunction("cudaMalloc");
     Function *CudaFree = M.getFunction("cudaFree");
-    LLVMContext& Context = M.getContext();
-    Type* Int8PtrType = Type::getInt8PtrTy(Context);
-    Type* Int32Type = Type::getInt32Ty(Context);
-    Type* Int64Type = Type::getInt64Ty(Context);
-    Type* VoidType = Type::getVoidTy(Context);
+    Function *CudaMemCpy = M.getFunction("cudaMemcpy");
+    LLVMContext &Context = M.getContext();
+    Type *Int8PtrType = Type::getInt8PtrTy(Context);
+    Type *Int32Type = Type::getInt32Ty(Context);
+    Type *Int64Type = Type::getInt64Ty(Context);
+    Type *VoidType = Type::getVoidTy(Context);
     std::vector<CallInst *> CudaMallocFunctionCalls;
     std::vector<CallInst *> CudaMemcpyFunctionCalls;
-      Value *One32Bit = ConstantInt::get(Int32Type, 1);
-      Value *Zero32Bit = ConstantInt::get(Int32Type, 0);  
+    Value *One32Bit = ConstantInt::get(Int32Type, 1);
+    Value *Zero32Bit = ConstantInt::get(Int32Type, 0);
 
     Function *ConfigureFunction = M.getFunction("cudaConfigureCall");
-    
 
     Function *Sync = M.getFunction("cudaThreadSynchronize");
-    std::vector<Value *> CreatedOutputs; // GERI TAŞI
+    std::vector<Value *> CreatedOutputs;
     for (Module::iterator F = M.begin(); F != M.end(); ++F) {
       for (Function::iterator BB = F->begin(); BB != F->end(); ++BB) {
         for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
           if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
-               StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
-                if(isReplicate(FunctionCall)){
-                  BasicBlock* CurrentBB2 = FunctionCall->getParent();
-                  BasicBlock* PrevBB2 = CurrentBB2->getPrevNode();
-                  StringRef PrevBBName = PrevBB2->getName();
-                  if(PrevBBName.contains("for")){
-                    errs() << "Bu bir loop\n";
+            StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
+            if (isReplicate(FunctionCall)) {
+
+
+              BasicBlock* CurrentBB = dyn_cast<BasicBlock>(BB);
+              BasicBlock* NextBB = CurrentBB->getNextNode();
+              BasicBlock* PrevBB = CurrentBB->getPrevNode();
+
+
+              Instruction* FirstInstructionOfNextBB = NextBB->getFirstNonPHI();
+              Instruction* FirstInstructionOfPrevBB = PrevBB->getFirstNonPHI();
+              Instruction& LastInstructionOfPrevBB = PrevBB->back();
+
+              Function* FunctionToReplicate = FunctionCall->getCalledFunction();
+
+              bool IsLoop = isForLoop(PrevBB);
+
+              Configurations = findConfigurationCall(PrevBB);
+              ConfigurationCall = Configurations.ConfigurationCall;
+
+              IRBuilder<> Builder(FunctionCall);  
+
+              MDNode *RedundancyMetadata = FunctionCall->getMetadata("Redundancy");
+              StringRef MetadataString =  getMetadataString(RedundancyMetadata);
+              std::pair<std::vector<std::string>, std::vector<std::string>> InputsAndOutputs = parseMetadataString(MetadataString);
+              std::vector<std::string> Inputs = InputsAndOutputs.first;
+              std::vector<std::string> Outputs = InputsAndOutputs.second;
+              size_t NumberOfArg = FunctionCall->arg_size();
+              std::vector<Value *> NewArgs;
+              std::vector<Output > OutputsToBeReplicated;
+
+              for(size_t ArgIndex = 0; ArgIndex < NumberOfArg; ArgIndex++){
+                NewArgs.push_back(FunctionCall->getArgOperand(ArgIndex));
+              }
+
+
+              for (size_t Index = 0; Index < Outputs.size(); Index++) {
+                  std::string VariableName = Outputs[Index];
+                  Output SingleOutput;
+                  SingleOutput.Name = VariableName;                  
+                  parseOutput(CudaMallocFunctionCalls, &SingleOutput);
+                  createAndAllocateVariableAndreMemCpy(Builder, &SingleOutput, LastInstructionOfPrevBB, CudaMemCpy, IsLoop);
+                  OutputsToBeReplicated.push_back(SingleOutput);
+              }
+
+
+              Builder.SetInsertPoint(FunctionCall);
+              for(Output &CreatedOutput : OutputsToBeReplicated){
+                  std::vector<Instruction *> Replications =  CreatedOutput.Replications;
+                  for(Instruction* Replication : Replications){
+                    Value* LoadedNewArg = Builder.CreateLoad(Replication);
+                    NewArgs.push_back(LoadedNewArg);
+                 }
+              }
+
+              NewArgs.push_back(Configurations.OriginalX);
+              NewArgs.push_back(Configurations.OriginalY);
+
+              FunctionType* NewKernelType = getTheNewKernelType(FunctionCall->getFunctionType(), OutputsToBeReplicated);
+              std::string NewKernelName = FunctionName.str() + RevisitedSuffix;
+              errs() << NewKernelName << "\n";
+              FunctionCallee NewKernelAsCallee =  M.getOrInsertFunction(NewKernelName, NewKernelType);
+              Instruction* NewFunctionCall = Builder.CreateCall(NewKernelAsCallee, NewArgs);
+
+              createRevisted(M, NewKernelName, NewKernelAsCallee);
+
+              CurrentInstruction++;
+              FunctionCall->eraseFromParent();  
+
+                CurrentBB = NewFunctionCall->getParent();
+                NextBB = CurrentBB->getNextNode();
+                PrevBB = CurrentBB->getPrevNode();
+                Instruction *FirstInstruction = dyn_cast<Instruction>(PrevBB->begin());
+                FirstInstruction = dyn_cast<Instruction>(NextBB->begin());
+
+                              
+              for(size_t OutputIndex = 0; OutputIndex < OutputsToBeReplicated.size(); OutputIndex++ ){
+
+                Instruction* ClonedConfigure = ConfigurationCall->clone();
+                ClonedConfigure->insertAfter(FirstInstruction);
+                Builder.SetInsertPoint(ClonedConfigure->getNextNode());
+                Instruction* ConfigureCheck = dyn_cast<Instruction>(Builder.CreateICmpNE(ClonedConfigure, One32Bit));
+                
+                Instruction* FirstInstructionOfNextBB = SplitBlockAndInsertIfThen(ConfigureCheck, ConfigureCheck->getNextNode(), false);
+                Builder.SetInsertPoint(FirstInstructionOfNextBB);
+
+
+                Output CurrentOutput = OutputsToBeReplicated.at(OutputIndex);
+                Type* OutputType = CurrentOutput.OutputType;
+                std::string MajorityFunctionName = "majorityFunction" + std::to_string(OutputType->getTypeID());
+                Function* MajorityFunction = M.getFunction(MajorityFunctionName);
+                if(MajorityFunction == nullptr) MajorityFunction = createMajorityVoting(M, dyn_cast<PointerType>(OutputType));
+
+                Value* OrijinalOutput = CurrentOutput.OutputAllocation;
+                Value* FirstReplicationOutput = CurrentOutput.Replications.at(0);
+                Value* SecondReplicationOutput = CurrentOutput.Replications.at(1);
+                Value* ResultOutput = CurrentOutput.OutputAllocation;
+                Value* SizeOfOutput = CurrentOutput.MallocInstruction->getArgOperand(1);
+
+                Value* LoadedOrijinalOutput = Builder.CreateLoad(OrijinalOutput);
+                Value* LoadedFirstReplicationOutput = Builder.CreateLoad(FirstReplicationOutput);
+                Value* LoadedSecondReplicationOutput = Builder.CreateLoad(SecondReplicationOutput);
+                Value* LoadedResultOutput = Builder.CreateLoad(ResultOutput);
+                //Value* LoadedSizeOfOutput = Builder.CreateLoad(SizeOfOutput);
+
+                Builder.CreateCall(MajorityFunction, {LoadedOrijinalOutput, LoadedFirstReplicationOutput, LoadedSecondReplicationOutput, LoadedResultOutput, SizeOfOutput});
+
+              }
+
+/*
+              createRevisted(Module &M, std::string FunctionName, FunctionCallee RevistedFunctionCallee)
+
+             for(int ReplicationIndex = 1; ReplicationIndex < NumberOfReplication; ReplicationIndex++){
+                CallInst* ClonedConfigureCall = dyn_cast<CallInst>(ConfigurationCall->clone());
+                ClonedConfigureCall->insertBefore(FirstInstructionOfNextBB);  
+
+                  Builder.SetInsertPoint(ClonedConfigureCall->getNextNode());
+                  Instruction* ConfgurationCheck = dyn_cast<Instruction>(Builder.CreateICmpNE(ClonedConfigureCall, One32Bit));
+                  Instruction* NewBasicBlockFirstInstruction = SplitBlockAndInsertIfThen(ConfgurationCheck, ConfgurationCheck->getNextNode(), false);
+                  errs() << *NewBasicBlockFirstInstruction << "\n";
+
+                  int NumberOfArg = FunctionCall->getNumArgOperands();
+                  std::vector<Value *> ArgsOfReplicationFunction;
+                  for(int ArgIndex = 0; ArgIndex < NumberOfArg - 1; ArgIndex++){ // Outputu çıkartıyoruz
+                    Value* Arg = FunctionCall->getArgOperand(ArgIndex);
+                    if(Instruction* ArgAsInstruction = dyn_cast<Instruction>(Arg)){
+                      Instruction* ClonedArg = ArgAsInstruction->clone();
+                      ClonedArg->insertBefore(NewBasicBlockFirstInstruction);
+                      Arg = ClonedArg;
+                    }
+                    ArgsOfReplicationFunction.push_back(Arg);
                   }
-                  Confg = findConfigurationCall(BB->getPrevNode());
-                  Cuda = Confg.ConfigCall;
-                   CreatedOutputs.clear();
-                    FunctionType* KernelType = FunctionCall->getFunctionType();
-                    unsigned int ParamSize = KernelType->getNumParams();
-                    Type* OutputType = KernelType->getParamType(ParamSize-1); // Son Parametrenin Output olduğu kabulü
-                    std::vector<Type *> NewFunctionType;
-                    for(unsigned int SIndex = 0; SIndex < ParamSize; SIndex++ ){
-                      NewFunctionType.push_back(KernelType->getParamType(SIndex));
-                    }
-                    for(int OutputIndex = 0; OutputIndex < Replication - 1; OutputIndex++){
-                      NewFunctionType.push_back(OutputType);
-                    }
-                    for(int Dimension = 0; Dimension < NumberofDimension; Dimension++ ){
-                      NewFunctionType.push_back(Int32Type);
-                    }
-                    FunctionType* NewKernelType = FunctionType::get(VoidType,NewFunctionType, true);
-                    std::string NewKernelName = FunctionName.str() + "Revisited";
-                    FunctionCallee NewKernelAsCallee =  M.getOrInsertFunction(NewKernelName, NewKernelType);
+                  Builder.SetInsertPoint(NewBasicBlockFirstInstruction);
+                  
+                  for(size_t OutputIndex = 0; OutputIndex < OutputsToBeReplicated.size(); OutputIndex++){
+                    Instruction* NewOutput = OutputsToBeReplicated.at(OutputIndex).Replications.at(ReplicationIndex-1);
+                    ArgsOfReplicationFunction.push_back(Builder.CreateLoad(NewOutput));
+                  }
 
-                    IRBuilder<> Builder(dyn_cast<Instruction>(BB->getPrevNode()->begin()));
-                   std::pair<Value *, std::pair<Type *, Type *>> SizeOfTheOutput;
-                    MDNode *RedundancyMetadata =
-                    FunctionCall->getMetadata("Redundancy");
-                    StringRef MetadataString =
-                        getMetadataString(RedundancyMetadata);
-                    std::pair<std::vector<std::string>, std::vector<std::string>>
-                        InputsAndOutputs = parseMetadataString(MetadataString);
-                    std::vector<std::string> Inputs = InputsAndOutputs.first;
-                      std::vector<std::string> Outputs = InputsAndOutputs.second;
-                        Builder.SetInsertPoint(FunctionCall);
-                        for(int i = 0; i < FunctionCall->getNumArgOperands(); i++){
-                          LoadInst* LoadedArg =  dyn_cast<LoadInst>(FunctionCall->getArgOperand(i));
-                          CreatedOutputs.push_back(LoadedArg);
-                        }
-                    for(int i = 0; i < 2; i++){
-                        for (size_t Index = 0; Index < Outputs.size(); Index++) {
-                        std::string VariableName = Outputs[Index];
-                        SizeOfTheOutput = getSizeofDevice(CudaMallocFunctionCalls, VariableName, &Builder);
-                        Value *NewOutput = createAndAllocateVariable( CudaMalloc, VariableName, SizeOfTheOutput.first, Builder, SizeOfTheOutput.second.first, SizeOfTheOutput.second.second);
-                        CreatedOutputs.push_back(NewOutput);
-                         Builder.SetInsertPoint(Cuda->getPrevNode());
+                  Builder.CreateCall(FunctionToReplicate, ArgsOfReplicationFunction);
+                  }
 
-                        reMemCpy(Builder,VariableName,dyn_cast<Instruction>(NewOutput), CudaMemcpyFunctionCalls);
-                        }
-                     }
-
-                     
-
-
-
-
-                    CreatedOutputs.push_back(Confg.OriginalX ); 
-                    CreatedOutputs.push_back(Confg.OriginalY);
-                    for(int I =  CreatedOutputs.size() - 4; I < CreatedOutputs.size() - 2 ; I++){
-                      CreatedOutputs.at(I) = Builder.CreateLoad(CreatedOutputs.at(I));
-                    }
-                    //  errs() << *F << "\n";
-
-
-
-                    Builder.SetInsertPoint(FunctionCall);
-                    //Function *F = M.getFunction("_Z16majorityVoting15PfS_S_");
-                    //Builder.CreateCall(F, {CreatedOutputs.at(CreatedOutputs.size()-3), CreatedOutputs.at(CreatedOutputs.size()-4), CreatedOutputs.at(CreatedOutputs.size()-5)});
-
-                   Instruction* NewFunctionCall = Builder.CreateCall(NewKernelAsCallee, CreatedOutputs);
-                   /*
-                    errs() << *FunctionCall->getArgOperand(ParamSize-1) << "\n";
-                    errs() << *CreatedOutputs.at(2) << "\n";
-                    errs() << *CreatedOutputs.at(3) << "\n";
-                    errs() << *M.getFunction("_Z6kernelPfS_S_") << "\n";
-                    Builder.CreateCall(M.getFunction("_Z6kernelPfS_S_"), {FunctionCall->getArgOperand(ParamSize-1), CreatedOutputs.at(2) , CreatedOutputs.at(3)});*/
-
-                   CurrentInstruction++;
-                   FunctionCall->eraseFromParent();
-                   //errs() << *CurrentInstruction << "\n";
-                    createRevisted(M,NewKernelName,NewKernelAsCallee);
-
-                    BasicBlock *CurrentBB = NewFunctionCall->getParent();
-                    BasicBlock *NextBB = CurrentBB->getNextNode();
-                    BasicBlock *PrevBB = CurrentBB->getPrevNode();
-                    Instruction *FirstInstruction = dyn_cast<Instruction>(PrevBB->begin());
-                    FirstInstruction = dyn_cast<Instruction>(NextBB->begin());
-
-
-                    Builder.SetInsertPoint(FirstInstruction);
-                    //Builder.CreateCall(Sync );
-                    int ArgSize = Cuda->getNumArgOperands();
-
-                    std::vector<Value *> Args1 ;
-                    for (int X = 0; X < ArgSize; X++ ){
-                    auto *Arg = Cuda->getArgOperand(X);
-                    Value* Args = dyn_cast_or_null<Value>(Arg);
-                    Args1.push_back(Args);
-                    }
-                    /*
-                    Builder.CreateCall(print, { Builder.CreateLoad(dyn_cast<Instruction>(dyn_cast<CallInst>(NewFunctionCall)->getArgOperand(ParamSize-1))->getOperand(0)),
-                    Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 4))->getOperand(0)),
-
-                    Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 3))->getOperand(0))
-                     });    */
-                     // Builder.CreateCall(Sync);
-                     //Builder.CreateCall(Sync);
-                    Instruction* NewInstruction = Builder.CreateCall(ConfigureFunction, Args1);
-                    Value *Condition = Builder.CreateICmpNE(NewInstruction, One32Bit);
-                    NewInstruction = SplitBlockAndInsertIfThen(
-                    Condition, dyn_cast<Instruction>(Condition)->getNextNode(), false);
-                    Builder.SetInsertPoint(NewInstruction);
+*/
 
 
 
 
 
-                    Type *TypeOfOutput = SizeOfTheOutput.second.first;
-                             
-                    Function *Majority = M.getFunction("majorityVoting15");
-
-                    if (Majority == nullptr)
-                     Majority = createMajorityVoting(M, dyn_cast<PointerType>(TypeOfOutput));
-
-                    std::vector<Value *> Args;
 
 
-                    Args.push_back(
-                      Builder.CreateLoad(
-                        dyn_cast<Instruction>(dyn_cast<CallInst>(NewFunctionCall)->getArgOperand(ParamSize-1))->getOperand(0)
-
-                        )); // A
-                    Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 4))->getOperand(0)));
-                    Args.push_back(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 3))->getOperand(0)));
-          
-                    Args.push_back(
-                      Builder.CreateLoad(
-                        dyn_cast<Instruction>(dyn_cast<CallInst>(NewFunctionCall)->getArgOperand(ParamSize-1))->getOperand(0)
-
-                        )); // A
-                    Args.push_back( Builder.CreateUDiv(SizeOfTheOutput.first, ConstantInt::get(Int64Type, 4)));
 
 
-                  Builder.CreateCall(Majority, Args);
 
-                //  errs() << *CudaFree << "\n";
-                //  Builder.CreateCall(CudaFree, {Builder.CreateBitCast(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 4))->getOperand(0)), Int8PtrType)});      
-                //  Builder.CreateCall(CudaFree, {Builder.CreateBitCast(Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 3))->getOperand(0)), Int8PtrType)});                  
-                  //Builder.CreateCall(CudaFree, {Builder.CreateLoad(dyn_cast<Instruction>(CreatedOutputs.at(CreatedOutputs.size() - 3))->getOperand(0))});
 
-                  //Builder.CreateCall(F, Args);
 
-                CurrentInstruction++;
-                CurrentInstruction++;
 
-            }else if (FunctionName == "cudaMemcpy") {
+
+            } else if (FunctionName == "cudaMemcpy") {
               CudaMemcpyFunctionCalls.push_back(FunctionCall);
 
-            }else if (FunctionName.contains("cudaMalloc")) {
+            } else if (FunctionName.contains("cudaMalloc")) {
               CudaMallocFunctionCalls.push_back(FunctionCall);
+            }
           }
-             }
+        }
       }
-    }
     }
 
     return false;
-
   }
 
 };
@@ -1289,3 +1392,4 @@ static RegisterStandardPasses YHost(PassManagerBuilder::EP_EarlyAsPossible,
                                    legacy::PassManagerBase &PM) {
                                   PM.add(new RMTv2Host());
                                 });
+
