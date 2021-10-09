@@ -44,6 +44,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 using namespace llvm;
@@ -59,27 +60,182 @@ struct Device : public ModulePass {
   Device() : ModulePass(ID) {}
 
   bool runOnModule(Module &M) override {
-
+    SymbolTableList<Function> &  Functions =  M.getFunctionList();
     NamedMDNode *Annotations = M.getNamedMetadata("nvvm.annotations");
-    errs() << Annotations << "\n";
-
     LLVMContext &C = M.getContext();
+
+    for (auto& Func : Functions) {
+      FunctionType* FuncType = Func.getFunctionType();
+      unsigned int NumberOfParam = FuncType->getNumParams();
+      Type* OutputType = FuncType->getParamType(NumberOfParam -1);
+      PointerType* OutputPtrType = dyn_cast_or_null<PointerType>(OutputType);
+      if(OutputPtrType == nullptr){
+        continue;
+      }
+      std::string FunctionName = "majorityVoting" + std::to_string(OutputType->getPointerElementType()->getTypeID());
+      errs() << *OutputType << "\n";
+      errs() << FunctionName << "\n";
+
     MDNode *N = MDNode::get(C, MDString::get(C, "kernel"));
-    MDNode *TempN = MDNode::get(C, ConstantAsMetadata::get(ConstantInt::get(
-                                       llvm::Type::getInt32Ty(C), 1)));
+    MDNode *TempN = MDNode::get(C, ConstantAsMetadata::get(ConstantInt::get(llvm::Type::getInt32Ty(C), 1)));
+    MDNode *Con = MDNode::concatenate(N, TempN);
+ if(M.getFunction(FunctionName) != nullptr)
+      continue;
+    FunctionCallee MajorityVotingCallee = M.getOrInsertFunction(FunctionName, Type::getVoidTy(C),
+        OutputPtrType, OutputPtrType, OutputPtrType, OutputPtrType,
+        Type::getInt64Ty(C)
+    );
+
+FunctionCallee GetBlockDim =
+        M.getFunction("llvm.nvvm.read.ptx.sreg.ntid.x");
+    FunctionCallee GetGridDim =
+        M.getFunction("llvm.nvvm.read.ptx.sreg.ctaid.x");
+    FunctionCallee GetThread = M.getFunction("llvm.nvvm.read.ptx.sreg.tid.x");
+
+    Function *MajorityVotingFunction =
+        dyn_cast<Function>(MajorityVotingCallee.getCallee());
+    MajorityVotingFunction->setCallingConv(CallingConv::C);
+
+    BasicBlock *EntryBlock =
+        BasicBlock::Create(C, "entry", MajorityVotingFunction);
+
+    BasicBlock *IfBlock =
+        BasicBlock::Create(C, "If", MajorityVotingFunction);
+    BasicBlock *SecondIfBlock =
+        BasicBlock::Create(C, "If", MajorityVotingFunction);
+    BasicBlock *ElseBlock =
+        BasicBlock::Create(C, "Else", MajorityVotingFunction);
+
+    BasicBlock *TailBlock =
+        BasicBlock::Create(C, "Tail", MajorityVotingFunction);
+    IRBuilder<> Builder(EntryBlock);
+
+    Function::arg_iterator Args = MajorityVotingFunction->arg_begin();
+    Value *DeviceA = Args++;
+    Value *DeviceB = Args++;
+    Value *DeviceC = Args++;
+    Value *DeviceOutput = Args++;
+    Value *ArraySize = Args;
+
+    AllocaInst *DeviceAAllocation = Builder.CreateAlloca(DeviceA->getType());
+    AllocaInst *DeviceBAllocation = Builder.CreateAlloca(DeviceB->getType());
+    AllocaInst *DeviceCAllocation = Builder.CreateAlloca(DeviceC->getType());
+    AllocaInst *DeviceOutputAllocation =
+        Builder.CreateAlloca(DeviceOutput->getType());
+    AllocaInst *DeviceArraySizeAllocation =
+        Builder.CreateAlloca(ArraySize->getType());
+
+    //AllocaInst *printFAlloca = Builder.CreateAlloca(d->getScalarType());
+
+    Value *ThreadIDptr = Builder.CreateAlloca(Type::getInt32Ty(C));
+
+    Builder.CreateStore(DeviceA, DeviceAAllocation);
+    Builder.CreateStore(DeviceB, DeviceBAllocation);
+    Builder.CreateStore(DeviceC, DeviceCAllocation);
+    Builder.CreateStore(DeviceOutput, DeviceOutputAllocation);
+    Builder.CreateStore(ArraySize, DeviceArraySizeAllocation);
+
+    Value *ThreadBlock = Builder.CreateCall(GetBlockDim);
+    Value *ThreadGrid = Builder.CreateCall(GetGridDim);
+    Value *BlockXGrid = Builder.CreateMul(ThreadBlock, ThreadGrid);
+    Value *ThreadNumber = Builder.CreateCall(GetThread);
+    Value *ThreadID = Builder.CreateAdd(BlockXGrid, ThreadNumber);
+    Builder.CreateStore(ThreadID, ThreadIDptr);
+    Value *TID = Builder.CreateLoad(ThreadIDptr);
+    Value *Extented = Builder.CreateZExt(TID, Type::getInt64Ty(C));
+    // errs() << *TID << "\n" << *(bitCast->getDestTy()) << "\n";
+    // auto XX =  Builder.CreateInBoundsGEP(printFAlloca,
+    // {ConstantInt::get(Type::getInt32Ty(Context),0),ConstantInt::get(Type::getInt32Ty(Context),0)});
+    Value *ArraySizeValue = Builder.CreateLoad(DeviceArraySizeAllocation);
+
+    // Builder.CreateStore(TID,XX);
+
+    Value *SizeTidCMP = Builder.CreateICmpULT(Extented, ArraySizeValue);
+    Builder.CreateCondBr(SizeTidCMP, IfBlock, TailBlock);
+
+    Builder.SetInsertPoint(IfBlock);
+
+    Value *DeviceAPointer = Builder.CreateLoad(DeviceAAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    Value *TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(C));
+    Value *PointerToTIDthElementOfDeviceA =
+        Builder.CreateInBoundsGEP(DeviceAPointer, TID64Bit);
+    Value *TIDthElementOfDeviceA =
+        Builder.CreateLoad(PointerToTIDthElementOfDeviceA);
+
+    Value *DeviceBPointer = Builder.CreateLoad(DeviceBAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(C));
+    Value *PointerToTIDthElementOfDeviceB =
+        Builder.CreateInBoundsGEP(DeviceBPointer, TID64Bit);
+    Value *TIDthElementOfDeviceB =
+        Builder.CreateLoad(PointerToTIDthElementOfDeviceB);
+    errs() << *TIDthElementOfDeviceA << "\n";
+    errs() << *TIDthElementOfDeviceA << "\n";
+    Value *DeviceADeviceBCMP;
+    if( TIDthElementOfDeviceA->getType()->isFloatTy() || TIDthElementOfDeviceB->getType()->isDoubleTy())
+    DeviceADeviceBCMP = Builder.CreateFCmpOEQ(TIDthElementOfDeviceA, TIDthElementOfDeviceB);
+    else
+    DeviceADeviceBCMP = Builder.CreateICmpEQ(TIDthElementOfDeviceA, TIDthElementOfDeviceB);
+
+    Builder.CreateCondBr(DeviceADeviceBCMP, SecondIfBlock, ElseBlock);
+
+    Builder.SetInsertPoint(SecondIfBlock);
+
+    DeviceAPointer = Builder.CreateLoad(DeviceAAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(C));
+    PointerToTIDthElementOfDeviceA =
+        Builder.CreateInBoundsGEP(DeviceAPointer, TID64Bit);
+    TIDthElementOfDeviceA = Builder.CreateLoad(PointerToTIDthElementOfDeviceA);
+    Value *DeviceOutputPointer = Builder.CreateLoad(DeviceOutputAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(C));
+    Value *PointerToTIDthElementOfDeviceOutput =
+        Builder.CreateInBoundsGEP(DeviceOutputPointer, TID64Bit);
+    Builder.CreateStore(TIDthElementOfDeviceA,
+                        PointerToTIDthElementOfDeviceOutput);
+
+    Builder.CreateBr(TailBlock);
+
+    Builder.SetInsertPoint(ElseBlock); // Burası Else
+    Value *DeviceCPointer = Builder.CreateLoad(DeviceCAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(C));
+    Value *PointerToTIDthElementOfDeviceC =
+        Builder.CreateInBoundsGEP(DeviceCPointer, TID64Bit);
+    Value *TIDthElementOfDeviceC =
+        Builder.CreateLoad(PointerToTIDthElementOfDeviceC);
+    DeviceOutputPointer = Builder.CreateLoad(DeviceOutputAllocation);
+    TID = Builder.CreateLoad(ThreadIDptr);
+    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(C));
+    PointerToTIDthElementOfDeviceOutput =
+        Builder.CreateInBoundsGEP(DeviceOutputPointer, TID64Bit);
+    Builder.CreateStore(TIDthElementOfDeviceC,
+                        PointerToTIDthElementOfDeviceOutput);
+    Builder.CreateBr(TailBlock);
+
+    Builder.SetInsertPoint(TailBlock);
+
+    /*
+            Builder.CreateCall(
+                M.getFunction("vprintf"),
+                {Builder.CreateGlobalStringPtr("ConfigurationCall'nın içindeyiz\n"),
+                 ConstantPointerNull::get(Type::getInt8PtrTy(M.getContext()))});
+        */
+    Annotations->addOperand(MDNode::concatenate(MDNode::get(C, ValueAsMetadata::get(MajorityVotingFunction)), Con));
+
+    Builder.CreateRetVoid();
+
+
+    }
+
+
+
     // MDNode* TempA = MDNode::get(C,
     // ValueAsMetadata::get(MajorityVotingFunction));
-    MDNode *Con = MDNode::concatenate(N, TempN);
     // Con = MDNode::concatenate(Con, TempA);
 
-    LLVMContext &Context = M.getContext();
-    FunctionCallee MajorityVotingCallee = M.getOrInsertFunction(
-        "majorityVoting15", Type::getVoidTy(Context),
-        Type::getFloatPtrTy(Context), Type::getFloatPtrTy(Context),
-        Type::getFloatPtrTy(Context), Type::getFloatPtrTy(Context),
-        Type::getInt64Ty(Context)
-
-    );
     /*
     Function *a;
     Value *b;
@@ -110,142 +266,7 @@ struct Device : public ModulePass {
       }
     }
     */
-    FunctionCallee GetBlockDim =
-        M.getFunction("llvm.nvvm.read.ptx.sreg.ntid.x");
-    FunctionCallee GetGridDim =
-        M.getFunction("llvm.nvvm.read.ptx.sreg.ctaid.x");
-    FunctionCallee GetThread = M.getFunction("llvm.nvvm.read.ptx.sreg.tid.x");
-
-    Function *MajorityVotingFunction =
-        dyn_cast<Function>(MajorityVotingCallee.getCallee());
-    MajorityVotingFunction->setCallingConv(CallingConv::C);
-
-    BasicBlock *EntryBlock =
-        BasicBlock::Create(Context, "entry", MajorityVotingFunction);
-
-    BasicBlock *IfBlock =
-        BasicBlock::Create(Context, "If", MajorityVotingFunction);
-    BasicBlock *SecondIfBlock =
-        BasicBlock::Create(Context, "If", MajorityVotingFunction);
-    BasicBlock *ElseBlock =
-        BasicBlock::Create(Context, "Else", MajorityVotingFunction);
-
-    BasicBlock *TailBlock =
-        BasicBlock::Create(Context, "Tail", MajorityVotingFunction);
-    IRBuilder<> Builder(EntryBlock);
-
-    Function::arg_iterator Args = MajorityVotingFunction->arg_begin();
-    Value *DeviceA = Args++;
-    Value *DeviceB = Args++;
-    Value *DeviceC = Args++;
-    Value *DeviceOutput = Args++;
-    Value *ArraySize = Args;
-
-    AllocaInst *DeviceAAllocation = Builder.CreateAlloca(DeviceA->getType());
-    AllocaInst *DeviceBAllocation = Builder.CreateAlloca(DeviceB->getType());
-    AllocaInst *DeviceCAllocation = Builder.CreateAlloca(DeviceC->getType());
-    AllocaInst *DeviceOutputAllocation =
-        Builder.CreateAlloca(DeviceOutput->getType());
-    AllocaInst *DeviceArraySizeAllocation =
-        Builder.CreateAlloca(ArraySize->getType());
-
-    //AllocaInst *printFAlloca = Builder.CreateAlloca(d->getScalarType());
-
-    Value *ThreadIDptr = Builder.CreateAlloca(Type::getInt32Ty(Context));
-
-    Builder.CreateStore(DeviceA, DeviceAAllocation);
-    Builder.CreateStore(DeviceB, DeviceBAllocation);
-    Builder.CreateStore(DeviceC, DeviceCAllocation);
-    Builder.CreateStore(DeviceOutput, DeviceOutputAllocation);
-    Builder.CreateStore(ArraySize, DeviceArraySizeAllocation);
-
-    Value *ThreadBlock = Builder.CreateCall(GetBlockDim);
-    Value *ThreadGrid = Builder.CreateCall(GetGridDim);
-    Value *BlockXGrid = Builder.CreateMul(ThreadBlock, ThreadGrid);
-    Value *ThreadNumber = Builder.CreateCall(GetThread);
-    Value *ThreadID = Builder.CreateAdd(BlockXGrid, ThreadNumber);
-    Builder.CreateStore(ThreadID, ThreadIDptr);
-    Value *TID = Builder.CreateLoad(ThreadIDptr);
-    Value *Extented = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
-    // errs() << *TID << "\n" << *(bitCast->getDestTy()) << "\n";
-    // auto XX =  Builder.CreateInBoundsGEP(printFAlloca,
-    // {ConstantInt::get(Type::getInt32Ty(Context),0),ConstantInt::get(Type::getInt32Ty(Context),0)});
-    Value *ArraySizeValue = Builder.CreateLoad(DeviceArraySizeAllocation);
-
-    // Builder.CreateStore(TID,XX);
-
-    Value *SizeTidCMP = Builder.CreateICmpULT(Extented, ArraySizeValue);
-    Builder.CreateCondBr(SizeTidCMP, IfBlock, TailBlock);
-
-    Builder.SetInsertPoint(IfBlock);
-
-    Value *DeviceAPointer = Builder.CreateLoad(DeviceAAllocation);
-    TID = Builder.CreateLoad(ThreadIDptr);
-    Value *TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
-    Value *PointerToTIDthElementOfDeviceA =
-        Builder.CreateInBoundsGEP(DeviceAPointer, TID64Bit);
-    Value *TIDthElementOfDeviceA =
-        Builder.CreateLoad(PointerToTIDthElementOfDeviceA);
-
-    Value *DeviceBPointer = Builder.CreateLoad(DeviceBAllocation);
-    TID = Builder.CreateLoad(ThreadIDptr);
-    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
-    Value *PointerToTIDthElementOfDeviceB =
-        Builder.CreateInBoundsGEP(DeviceBPointer, TID64Bit);
-    Value *TIDthElementOfDeviceB =
-        Builder.CreateLoad(PointerToTIDthElementOfDeviceB);
-
-    Value *DeviceADeviceBCMP =
-        Builder.CreateFCmpOEQ(TIDthElementOfDeviceA, TIDthElementOfDeviceB);
-    Builder.CreateCondBr(DeviceADeviceBCMP, SecondIfBlock, ElseBlock);
-
-    Builder.SetInsertPoint(SecondIfBlock);
-
-    DeviceAPointer = Builder.CreateLoad(DeviceAAllocation);
-    TID = Builder.CreateLoad(ThreadIDptr);
-    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
-    PointerToTIDthElementOfDeviceA =
-        Builder.CreateInBoundsGEP(DeviceAPointer, TID64Bit);
-    TIDthElementOfDeviceA = Builder.CreateLoad(PointerToTIDthElementOfDeviceA);
-    Value *DeviceOutputPointer = Builder.CreateLoad(DeviceOutputAllocation);
-    TID = Builder.CreateLoad(ThreadIDptr);
-    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
-    Value *PointerToTIDthElementOfDeviceOutput =
-        Builder.CreateInBoundsGEP(DeviceOutputPointer, TID64Bit);
-    Builder.CreateStore(TIDthElementOfDeviceA,
-                        PointerToTIDthElementOfDeviceOutput);
-
-    Builder.CreateBr(TailBlock);
-
-    Builder.SetInsertPoint(ElseBlock); // Burası Else
-    Value *DeviceCPointer = Builder.CreateLoad(DeviceCAllocation);
-    TID = Builder.CreateLoad(ThreadIDptr);
-    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
-    Value *PointerToTIDthElementOfDeviceC =
-        Builder.CreateInBoundsGEP(DeviceCPointer, TID64Bit);
-    Value *TIDthElementOfDeviceC =
-        Builder.CreateLoad(PointerToTIDthElementOfDeviceC);
-    DeviceOutputPointer = Builder.CreateLoad(DeviceOutputAllocation);
-    TID = Builder.CreateLoad(ThreadIDptr);
-    TID64Bit = Builder.CreateZExt(TID, Type::getInt64Ty(Context));
-    PointerToTIDthElementOfDeviceOutput =
-        Builder.CreateInBoundsGEP(DeviceOutputPointer, TID64Bit);
-    Builder.CreateStore(TIDthElementOfDeviceC,
-                        PointerToTIDthElementOfDeviceOutput);
-    Builder.CreateBr(TailBlock);
-
-    Builder.SetInsertPoint(TailBlock);
-
-    /*
-            Builder.CreateCall(
-                M.getFunction("vprintf"),
-                {Builder.CreateGlobalStringPtr("ConfigurationCall'nın içindeyiz\n"),
-                 ConstantPointerNull::get(Type::getInt8PtrTy(M.getContext()))});
-        */
-    Annotations->addOperand(MDNode::concatenate(
-        MDNode::get(C, ValueAsMetadata::get(MajorityVotingFunction)), Con));
-
-    Builder.CreateRetVoid();
+    
     return false;
   }
 
@@ -335,6 +356,7 @@ struct DHost : public ModulePass {
   Value *createAndAllocateVariable(Value *Callee, std::string VariableName,
                                    Value *Size, IRBuilder<> Builder,
                                    Type *VariableType, Type *DestinationType) {
+                                     errs() << VariableName << "-----------\n";
     Value *NullforOutputType =
         ConstantPointerNull::get(dyn_cast<PointerType>(VariableType));
     Value *Allocated =
@@ -477,7 +499,9 @@ struct DHost : public ModulePass {
   }
 
   Function *createMajorityVoting(Module &M, PointerType *MajorityVotingPointerType) {
-    std::string MajorityVotingFunctionName = "majorityVoting15";
+
+      std::string MajorityVotingFunctionName = "majorityVoting" + std::to_string(MajorityVotingPointerType->getPointerElementType()->getTypeID());
+      errs() << MajorityVotingFunctionName << "\n";
     // std::to_string(MajorityVotingPointerType->getTypeID());
 
     Function *CudaRegisterFunction = M.getFunction("__cuda_register_globals");
@@ -499,7 +523,6 @@ struct DHost : public ModulePass {
         MajorityVotingPointerType, MajorityVotingPointerType,
         Type::getInt64Ty(Context));
     std::vector<Value *> Parameters;
-
     Function *MajorityVotingFunction =
         dyn_cast<Function>(MajorityVotingCallee.getCallee());
     MajorityVotingFunction->setCallingConv(CallingConv::C);
@@ -676,7 +699,7 @@ void parseOutput(std::vector<CallInst *> CudaMallocFunctionCalls, Output* Single
   std::string VariableName = SingleOutput->Name;
   AllocaInst *AllocaVariable = nullptr;
   Type *DestinationType = nullptr;
-  for (size_t Index = 0; Index < CudaMallocFunctionCalls.size(); Index++) {
+    for( size_t Index = CudaMallocFunctionCalls.size(); Index-- > 0; ){
       CallInst *CudaMallocFunctionCall = CudaMallocFunctionCalls.at(Index);
       Value* Operand = CudaMallocFunctionCall->getArgOperand(0);
       if (BitCastInst *BitCastVariable = dyn_cast<BitCastInst>(Operand)) {
@@ -705,8 +728,12 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
   Type* OutputType = OutputToReplicate->OutputType;
   Type* DestinationType = OutputToReplicate->DestinationType;
   for(int Replication = 0; Replication < NumberOfReplication - 1; Replication++){
-    Builder.SetInsertPoint(OutputToReplicateAllocation->getNextNode());
+    Builder.SetInsertPoint(OutputToReplicateAllocation->getNextNode());       
     Instruction* NewAllocated = Builder.CreateAlloca(OutputType, nullptr,  OutputToReplicate->Name);
+    errs() << "####################\n";
+    errs() << NewAllocated->getParent()->getParent()->getName() << "\n";
+    errs() <<  OutputToReplicate->Name << "\n";
+    errs() << "####################\n";
     Instruction* ClonedMalloc = OutputToReplicate->MallocInstruction->clone();
     CallInst* Cloned = dyn_cast<CallInst>(ClonedMalloc);
     Value* BitcastedCloned = Builder.CreateBitCast(NewAllocated, DestinationType);
@@ -744,7 +771,7 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
           if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
             StringRef FunctionName =  FunctionCall->getCalledFunction()->getName();
             if (isReplicate(FunctionCall)) {
-
+              
               BasicBlock* CurrentBB = dyn_cast<BasicBlock>(BB);
               BasicBlock* NextBB = CurrentBB->getNextNode();
               BasicBlock* PrevBB = CurrentBB->getPrevNode();
@@ -799,25 +826,61 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                   Builder.SetInsertPoint(ClonedConfigureCall->getNextNode());
                   Instruction* ConfgurationCheck = dyn_cast<Instruction>(Builder.CreateICmpNE(ClonedConfigureCall, One32Bit));
                   Instruction* NewBasicBlockFirstInstruction = SplitBlockAndInsertIfThen(ConfgurationCheck, ConfgurationCheck->getNextNode(), false);
-                  errs() << *NewBasicBlockFirstInstruction << "\n";
 
                   int NumberOfArg = FunctionCall->getNumArgOperands();
                   std::vector<Value *> ArgsOfReplicationFunction;
                   for(int ArgIndex = 0; ArgIndex < NumberOfArg - 1; ArgIndex++){ // Outputu çıkartıyoruz
                     Value* Arg = FunctionCall->getArgOperand(ArgIndex);
+                    Value* Ref = Arg;
+                    std::vector<Instruction * > InstructionToClone;
                     if(Instruction* ArgAsInstruction = dyn_cast<Instruction>(Arg)){
-                      Instruction* ClonedArg = ArgAsInstruction->clone();
-                      ClonedArg->insertBefore(NewBasicBlockFirstInstruction);
-                      Arg = ClonedArg;
+                      Instruction* CloneLocation = NewBasicBlockFirstInstruction;
+                      
+
+
+                      while(!dyn_cast<AllocaInst>(ArgAsInstruction)){
+                        Instruction* Cloned = ArgAsInstruction->clone();
+                        Cloned->insertBefore(CloneLocation);
+                        if(dyn_cast<LoadInst>(Cloned)){
+                            Ref = Cloned;
+                        }else{
+                            InstructionToClone.push_back(Cloned);
+                          Cloned->setOperand(0, Ref);
+                        }
+
+                        CloneLocation = Cloned;
+                        ArgAsInstruction =  dyn_cast<Instruction>(ArgAsInstruction->getOperand(0));
+                      }      
+                      
+                                    
+                      for (unsigned Index = InstructionToClone.size(); Index-- > 0; ){
+                        Instruction* Cloned = InstructionToClone.at(Index);
+                         Cloned->setOperand(0, Ref);
+                         Ref = Cloned;
+                      } 
+
+                      //errs() << *ForArg << "++\n";
                     }
-                    ArgsOfReplicationFunction.push_back(Arg);
+                    ArgsOfReplicationFunction.push_back(Ref);
                   }
                   Builder.SetInsertPoint(NewBasicBlockFirstInstruction);
                   
                   for(size_t OutputIndex = 0; OutputIndex < OutputsToBeReplicated.size(); OutputIndex++){
                     Instruction* NewOutput = OutputsToBeReplicated.at(OutputIndex).Replications.at(ReplicationIndex-1);
+                    errs() << *NewOutput << "\n";
+                    errs() << NewOutput->getParent()->getParent()->getName() << "\n";
                     ArgsOfReplicationFunction.push_back(Builder.CreateLoad(NewOutput));
                   }
+
+
+
+                  
+                  errs() << F->getName() << "\n";
+                  /*
+                  errs() << *ArgsOfReplicationFunction.at(0) << "\n";
+                  errs() << *ArgsOfReplicationFunction.at(1) << "\n";
+                  errs() << *ArgsOfReplicationFunction.at(2) << "\n";
+                  */
 
                   Builder.CreateCall(FunctionToReplicate, ArgsOfReplicationFunction);
                   }
@@ -827,7 +890,6 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                   BasicBlock* CurrentBasicBlock = CurrectInsertionPoint->getParent();
                   BasicBlock* NextBasicBlock = CurrentBasicBlock->getNextNode();
                   Instruction* FirstInstrionOfNextBB = NextBasicBlock->getFirstNonPHI();
-                  errs() << *FirstInstrionOfNextBB << "++\n";
                 
                 for(size_t OutputIndex = 0; OutputIndex < OutputsToBeReplicated.size(); OutputIndex++ ){
 
@@ -842,7 +904,7 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
 
                   Output CurrentOutput = OutputsToBeReplicated.at(OutputIndex);
                   Type* OutputType = CurrentOutput.OutputType;
-                  std::string MajorityFunctionName = "majorityFunction" + std::to_string(OutputType->getTypeID());
+                  std::string MajorityFunctionName = "majorityFunction" + std::to_string(OutputType->getPointerElementType()->getTypeID());
                   Function* MajorityFunction = M.getFunction(MajorityFunctionName);
                   if(MajorityFunction == nullptr) MajorityFunction = createMajorityVoting(M, dyn_cast<PointerType>(OutputType));
 
@@ -875,8 +937,8 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
         }
       }
     }
-
-    return false;
+    
+        return false;
   }
 };
 

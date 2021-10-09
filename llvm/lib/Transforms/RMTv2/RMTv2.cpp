@@ -113,7 +113,6 @@ struct RMTv2Device : public ModulePass {
 
     NamedMDNode *Annotations = M.getNamedMetadata("nvvm.annotations");
     LLVMContext &Context = M.getContext();
-    errs() << "Byrada\n";
 
 
     MDNode *N = MDNode::get(Context, MDString::get(Context, "kernel"));
