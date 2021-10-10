@@ -135,6 +135,8 @@ FunctionCallee GetBlockDim =
     Builder.CreateStore(DeviceOutput, DeviceOutputAllocation);
     Builder.CreateStore(ArraySize, DeviceArraySizeAllocation);
 
+    errs() << *GetBlockDim.getFunctionType() << "\n";
+
     Value *ThreadBlock = Builder.CreateCall(GetBlockDim);
     Value *ThreadGrid = Builder.CreateCall(GetGridDim);
     Value *BlockXGrid = Builder.CreateMul(ThreadBlock, ThreadGrid);
@@ -722,6 +724,8 @@ void parseOutput(std::vector<CallInst *> CudaMallocFunctionCalls, Output* Single
 void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToReplicate, Instruction& LastInstructionOfPrevBB, FunctionCallee CudaMemcpy, bool IsLoop){
   LLVMContext &Context = LastInstructionOfPrevBB.getContext();
   Type *Int32Type = Type::getInt32Ty(Context);
+
+  Type *Int8PtrType = Type::getInt8PtrTy(Context);
   Value* Three32Bit =  ConstantInt::get(Int32Type, 3);
   AllocaInst* OutputToReplicateAllocation = OutputToReplicate->OutputAllocation;
   Value* Size = OutputToReplicate->MallocInstruction->getArgOperand(1);
@@ -730,19 +734,19 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
   for(int Replication = 0; Replication < NumberOfReplication - 1; Replication++){
     Builder.SetInsertPoint(OutputToReplicateAllocation->getNextNode());       
     Instruction* NewAllocated = Builder.CreateAlloca(OutputType, nullptr,  OutputToReplicate->Name);
-    errs() << "####################\n";
-    errs() << NewAllocated->getParent()->getParent()->getName() << "\n";
-    errs() <<  OutputToReplicate->Name << "\n";
-    errs() << "####################\n";
     Instruction* ClonedMalloc = OutputToReplicate->MallocInstruction->clone();
     CallInst* Cloned = dyn_cast<CallInst>(ClonedMalloc);
-    Value* BitcastedCloned = Builder.CreateBitCast(NewAllocated, DestinationType);
-    Cloned->setArgOperand(0, BitcastedCloned);
+    if(DestinationType == nullptr){
+      Cloned->setArgOperand(0, NewAllocated);
+    }else{
+      Value* BitcastedCloned = Builder.CreateBitCast(NewAllocated, DestinationType);
+      Cloned->setArgOperand(0, BitcastedCloned);
+    }
     Cloned->insertAfter(OutputToReplicate->MallocInstruction);
     Builder.SetInsertPoint(&LastInstructionOfPrevBB); 
-    BitcastedCloned = Builder.CreateBitCast(Builder.CreateLoad(NewAllocated), DestinationType->getPointerElementType());
+    Value* BitcastedCloned = Builder.CreateBitCast(Builder.CreateLoad(NewAllocated), Int8PtrType);
     Value* LoadedOutput = Builder.CreateLoad(OutputToReplicateAllocation);
-    Value* BitcastedOutput = Builder.CreateBitCast(LoadedOutput, DestinationType->getPointerElementType());
+    Value* BitcastedOutput = Builder.CreateBitCast(LoadedOutput, Int8PtrType);
     Builder.CreateCall(CudaMemcpy, {BitcastedCloned, BitcastedOutput, Size, Three32Bit});
     OutputToReplicate->Replications.push_back(NewAllocated);
   }
