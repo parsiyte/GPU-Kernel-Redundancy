@@ -64,33 +64,59 @@ struct Device : public ModulePass {
     NamedMDNode *Annotations = M.getNamedMetadata("nvvm.annotations");
     LLVMContext &C = M.getContext();
 
-    for (auto& Func : Functions) {
-      FunctionType* FuncType = Func.getFunctionType();
+    MDNode *N = MDNode::get(C, MDString::get(C, "kernel"));
+
+
+    std::vector<Function *> ValidKernels;
+    for(size_t Index = 0; Index < Annotations->getNumOperands(); Index++){
+      MDNode* Singleannotation = Annotations->getOperand(Index);
+      MDString* Op = dyn_cast<MDString>(Singleannotation->getOperand(1));
+      if(Op->getString() == "kernel"){
+        ValueAsMetadata* test = dyn_cast<ValueAsMetadata>(Singleannotation->getOperand(0));
+        Function* testV = dyn_cast<Function>(test->getValue());
+        ValidKernels.push_back( testV);
+
+      }
+
+
+    }
+    
+
+
+    FunctionType* Dims = FunctionType::get(Type::getInt32Ty(C), true);
+
+    for (auto& Func : ValidKernels) {
+
+      FunctionType* FuncType = Func->getFunctionType();
+
       unsigned int NumberOfParam = FuncType->getNumParams();
       Type* OutputType = FuncType->getParamType(NumberOfParam -1);
       PointerType* OutputPtrType = dyn_cast_or_null<PointerType>(OutputType);
+      errs() << *OutputType << "\n";
       if(OutputPtrType == nullptr){
         continue;
       }
-      std::string FunctionName = "majorityVoting" + std::to_string(OutputType->getPointerElementType()->getTypeID());
-      errs() << *OutputType << "\n";
-      errs() << FunctionName << "\n";
-
-    MDNode *N = MDNode::get(C, MDString::get(C, "kernel"));
+      
+    std::string FunctionName = "majorityVoting" + std::to_string(OutputType->getPointerElementType()->getTypeID());
     MDNode *TempN = MDNode::get(C, ConstantAsMetadata::get(ConstantInt::get(llvm::Type::getInt32Ty(C), 1)));
     MDNode *Con = MDNode::concatenate(N, TempN);
- if(M.getFunction(FunctionName) != nullptr)
-      continue;
+      if(M.getFunction(FunctionName) != nullptr){
+            continue;
+      }
+
+
     FunctionCallee MajorityVotingCallee = M.getOrInsertFunction(FunctionName, Type::getVoidTy(C),
         OutputPtrType, OutputPtrType, OutputPtrType, OutputPtrType,
         Type::getInt64Ty(C)
     );
 
+
+    FunctionCallee GetThread = M.getFunction("llvm.nvvm.read.ptx.sreg.tid.x");
+
 FunctionCallee GetBlockDim =
-        M.getFunction("llvm.nvvm.read.ptx.sreg.ntid.x");
+        M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.ntid.x", GetThread.getFunctionType());
     FunctionCallee GetGridDim =
         M.getFunction("llvm.nvvm.read.ptx.sreg.ctaid.x");
-    FunctionCallee GetThread = M.getFunction("llvm.nvvm.read.ptx.sreg.tid.x");
 
     Function *MajorityVotingFunction =
         dyn_cast<Function>(MajorityVotingCallee.getCallee());
@@ -135,7 +161,6 @@ FunctionCallee GetBlockDim =
     Builder.CreateStore(DeviceOutput, DeviceOutputAllocation);
     Builder.CreateStore(ArraySize, DeviceArraySizeAllocation);
 
-    errs() << *GetBlockDim.getFunctionType() << "\n";
 
     Value *ThreadBlock = Builder.CreateCall(GetBlockDim);
     Value *ThreadGrid = Builder.CreateCall(GetGridDim);
@@ -172,8 +197,6 @@ FunctionCallee GetBlockDim =
         Builder.CreateInBoundsGEP(DeviceBPointer, TID64Bit);
     Value *TIDthElementOfDeviceB =
         Builder.CreateLoad(PointerToTIDthElementOfDeviceB);
-    errs() << *TIDthElementOfDeviceA << "\n";
-    errs() << *TIDthElementOfDeviceA << "\n";
     Value *DeviceADeviceBCMP;
     if( TIDthElementOfDeviceA->getType()->isFloatTy() || TIDthElementOfDeviceB->getType()->isDoubleTy())
     DeviceADeviceBCMP = Builder.CreateFCmpOEQ(TIDthElementOfDeviceA, TIDthElementOfDeviceB);
@@ -231,7 +254,7 @@ FunctionCallee GetBlockDim =
 
 
     }
-
+  
 
 
     // MDNode* TempA = MDNode::get(C,
@@ -839,19 +862,41 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                     std::vector<Instruction * > InstructionToClone;
                     if(Instruction* ArgAsInstruction = dyn_cast<Instruction>(Arg)){
                       Instruction* CloneLocation = NewBasicBlockFirstInstruction;
-                      
+                      while(true){
+                        errs() << *ArgAsInstruction << "\n";
+                        InstructionToClone.push_back(ArgAsInstruction);
+                        ArgAsInstruction = dyn_cast<Instruction>(ArgAsInstruction->getOperand(0));
+                        bool IfAlloca = dyn_cast_or_null<AllocaInst>(ArgAsInstruction) != nullptr;
+                        if(IfAlloca)
+                          break;
+                      }
+                      errs() << "#############\n";
+                      Instruction* PrevCloned = nullptr;
 
+                      for (unsigned Index = InstructionToClone.size(); Index-- > 1; ){
+                        Instruction* Cloned = InstructionToClone.at(Index)->clone();
+                        Cloned->insertBefore(CloneLocation);
+                        if(PrevCloned != nullptr){
+                          Cloned->setOperand(0, PrevCloned);
+                        }
+                         PrevCloned = Cloned;
+                      } 
+                      
+                      errs() << "#############\n";
+                      if(PrevCloned != nullptr){
+                          Builder.SetInsertPoint(PrevCloned->getNextNode());
+                         Ref = Builder.CreateLoad(PrevCloned);
+                         }else{
+                           Instruction* NewLoad = dyn_cast<Instruction>(Ref)->clone();
+                           NewLoad->insertBefore(CloneLocation);
+                           Ref = NewLoad;
+                         }
+                    /*
 
                       while(!dyn_cast<AllocaInst>(ArgAsInstruction)){
                         Instruction* Cloned = ArgAsInstruction->clone();
                         Cloned->insertBefore(CloneLocation);
-                        if(dyn_cast<LoadInst>(Cloned)){
-                            Ref = Cloned;
-                        }else{
-                            InstructionToClone.push_back(Cloned);
-                          Cloned->setOperand(0, Ref);
-                        }
-
+                        InstructionToClone.push_back(Cloned);
                         CloneLocation = Cloned;
                         ArgAsInstruction =  dyn_cast<Instruction>(ArgAsInstruction->getOperand(0));
                       }      
@@ -860,10 +905,11 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                       for (unsigned Index = InstructionToClone.size(); Index-- > 0; ){
                         Instruction* Cloned = InstructionToClone.at(Index);
                          Cloned->setOperand(0, Ref);
-                         Ref = Cloned;
+                         Ref = ArgAsInstruction;
+                         
                       } 
+                      */
 
-                      //errs() << *ForArg << "++\n";
                     }
                     ArgsOfReplicationFunction.push_back(Ref);
                   }
@@ -871,21 +917,8 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                   
                   for(size_t OutputIndex = 0; OutputIndex < OutputsToBeReplicated.size(); OutputIndex++){
                     Instruction* NewOutput = OutputsToBeReplicated.at(OutputIndex).Replications.at(ReplicationIndex-1);
-                    errs() << *NewOutput << "\n";
-                    errs() << NewOutput->getParent()->getParent()->getName() << "\n";
                     ArgsOfReplicationFunction.push_back(Builder.CreateLoad(NewOutput));
                   }
-
-
-
-                  
-                  errs() << F->getName() << "\n";
-                  /*
-                  errs() << *ArgsOfReplicationFunction.at(0) << "\n";
-                  errs() << *ArgsOfReplicationFunction.at(1) << "\n";
-                  errs() << *ArgsOfReplicationFunction.at(2) << "\n";
-                  */
-
                   Builder.CreateCall(FunctionToReplicate, ArgsOfReplicationFunction);
                   }
 
@@ -894,6 +927,8 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                   BasicBlock* CurrentBasicBlock = CurrectInsertionPoint->getParent();
                   BasicBlock* NextBasicBlock = CurrentBasicBlock->getNextNode();
                   Instruction* FirstInstrionOfNextBB = NextBasicBlock->getFirstNonPHI();
+
+                  errs() << *F << "\n";
                 
                 for(size_t OutputIndex = 0; OutputIndex < OutputsToBeReplicated.size(); OutputIndex++ ){
 
@@ -901,7 +936,7 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                   ClonedConfigure->insertAfter(FirstInstrionOfNextBB);
                   Builder.SetInsertPoint(ClonedConfigure->getNextNode());
                   Instruction* ConfigureCheck = dyn_cast<Instruction>(Builder.CreateICmpNE(ClonedConfigure, One32Bit));
-                  
+                  errs() << *F << "\n";
                   Instruction* FirstInstructionOfNextBB = SplitBlockAndInsertIfThen(ConfigureCheck, ConfigureCheck->getNextNode(), false);
                   Builder.SetInsertPoint(FirstInstructionOfNextBB);
 
