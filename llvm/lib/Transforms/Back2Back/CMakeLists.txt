@@ -10,8 +10,8 @@ if(WIN32 OR CYGWIN)
   set(LLVM_LINK_COMPONENTS Core Support)
 endif()
 
-add_llvm_library( LLVMCUDA MODULE BUILDTREE_ONLY
-  CUDA.cpp
+add_llvm_library( LLVMBack2Back MODULE BUILDTREE_ONLY
+  Back2Back.cpp
   DEPENDS
   intrinsics_gen
   PLUGIN_TOOL

@@ -10,6 +10,7 @@ add_subdirectory(ObjCARC)
 add_subdirectory(Coroutines)
 add_subdirectory(CFGuard)
 
-add_subdirectory(CUDA)
+add_subdirectory(Back2Back)
+add_subdirectory(Back2BackWithStreams)
 add_subdirectory(RMT)
 add_subdirectory(RMTv2)

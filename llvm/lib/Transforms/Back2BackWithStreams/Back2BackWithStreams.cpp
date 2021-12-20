@@ -51,7 +51,7 @@ using namespace llvm;
 #define ArgumanOrder 1 // Cuda Register Fonksiyonu çağrılırken 1 arguman fonksiyonu veriyor.
     // Gelecek Cuda versiyonlarında değişme ihtimaline karşı en üste tanımladık.
 #define NumberOfReplication 3
-#define STREAMENABLED false
+#define STREAMENABLED true
 
 namespace {
 
@@ -545,8 +545,9 @@ struct DHost : public ModulePass {
     FunctionCallee MajorityVotingCallee = M.getOrInsertFunction(
         MajorityVotingFunctionName, Type::getVoidTy(Context),
         MajorityVotingPointerType, MajorityVotingPointerType,
-        MajorityVotingPointerType, MajorityVotingPointerType,
-        Type::getInt64Ty(Context));
+        MajorityVotingPointerType, Int64Type);
+
+
     std::vector<Value *> Parameters;
     Function *MajorityVotingFunction =
         dyn_cast<Function>(MajorityVotingCallee.getCallee());
@@ -560,9 +561,6 @@ struct DHost : public ModulePass {
 
     Value *C = Args++;
     C->setName("C");
-
-    Value *Output = Args++;
-    Output->setName("Output");
 
     Value *Size = Args++;
     Size->setName("Size");
@@ -583,21 +581,16 @@ struct DHost : public ModulePass {
     Value *Cptr =
         Builder.CreateAlloca(MajorityVotingPointerType, nullptr, "C.addr");
 
-    Value *Outputptr =
-        Builder.CreateAlloca(MajorityVotingPointerType, nullptr, "output.addr");
-
     Value *Sizeptr = Builder.CreateAlloca(Int64Type, nullptr, "size.addr");
 
     Builder.CreateStore(A, Aptr);
     Builder.CreateStore(B, Bptr);
     Builder.CreateStore(C, Cptr);
-    Builder.CreateStore(Output, Outputptr);
     Builder.CreateStore(Size, Sizeptr);
 
     Parameters.push_back(Aptr);
     Parameters.push_back(Bptr);
     Parameters.push_back(Cptr);
-    Parameters.push_back(Outputptr);
     Parameters.push_back(Sizeptr);
 
     int Offset = 0;
@@ -746,8 +739,8 @@ void parseOutput(std::vector<CallInst *> CudaMallocFunctionCalls, Output* Single
 }
 void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToReplicate, Instruction& LastInstructionOfPrevBB, FunctionCallee CudaMemcpy, bool IsLoop){
   LLVMContext &Context = LastInstructionOfPrevBB.getContext();
+   Function *cudaThreadSynchronize = LastInstructionOfPrevBB.getParent()->getParent()->getParent()->getFunction("cudaThreadSynchronize");
   Type *Int32Type = Type::getInt32Ty(Context);
-
   Type *Int8PtrType = Type::getInt8PtrTy(Context);
   Value* Three32Bit =  ConstantInt::get(Int32Type, 3);
   AllocaInst* OutputToReplicateAllocation = OutputToReplicate->OutputAllocation;
@@ -771,6 +764,7 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
     Value* LoadedOutput = Builder.CreateLoad(OutputToReplicateAllocation);
     Value* BitcastedOutput = Builder.CreateBitCast(LoadedOutput, Int8PtrType);
     Builder.CreateCall(CudaMemcpy, {BitcastedCloned, BitcastedOutput, Size, Three32Bit});
+    Builder.CreateCall(cudaThreadSynchronize);
     OutputToReplicate->Replications.push_back(NewAllocated);
   }
 
@@ -812,6 +806,7 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
               Instruction& LastInstructionOfPrevBB = PrevBB->back();
               IRBuilder<> Builder(FunctionCall);  
               if(STREAMENABLED == true){
+                errs() << "BURADA\n";
                 ArrayType *ArrayType = ArrayType::get(StreamType, NumberOfReplication);
                 Builder.SetInsertPoint(FirstInstructionOfPrevBB);
                 StreamArray = Builder.CreateAlloca(ArrayType, nullptr, "streams");
@@ -837,7 +832,7 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                   createAndAllocateVariableAndreMemCpy(Builder, &SingleOutput, LastInstructionOfPrevBB, CudaMemCpy, IsLoop);
                   OutputsToBeReplicated.push_back(SingleOutput);
               }
-              
+              Builder.SetInsertPoint(OutputsToBeReplicated.at(0).Replications.at(NumberOfReplication-2));
               for(int ReplicationIndex = 1; ReplicationIndex < NumberOfReplication; ReplicationIndex++){
                 CallInst* ClonedConfigureCall = dyn_cast<CallInst>(ConfigurationCall->clone());
                 ClonedConfigureCall->insertBefore(FirstInstructionOfNextBB);  
@@ -891,24 +886,6 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                            NewLoad->insertBefore(CloneLocation);
                            Ref = NewLoad;
                          }
-                    /*
-
-                      while(!dyn_cast<AllocaInst>(ArgAsInstruction)){
-                        Instruction* Cloned = ArgAsInstruction->clone();
-                        Cloned->insertBefore(CloneLocation);
-                        InstructionToClone.push_back(Cloned);
-                        CloneLocation = Cloned;
-                        ArgAsInstruction =  dyn_cast<Instruction>(ArgAsInstruction->getOperand(0));
-                      }      
-                      
-                                    
-                      for (unsigned Index = InstructionToClone.size(); Index-- > 0; ){
-                        Instruction* Cloned = InstructionToClone.at(Index);
-                         Cloned->setOperand(0, Ref);
-                         Ref = ArgAsInstruction;
-                         
-                      } 
-                      */
 
                     }
                     ArgsOfReplicationFunction.push_back(Ref);
@@ -919,6 +896,7 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                     Instruction* NewOutput = OutputsToBeReplicated.at(OutputIndex).Replications.at(ReplicationIndex-1);
                     ArgsOfReplicationFunction.push_back(Builder.CreateLoad(NewOutput));
                   }
+
                   Builder.CreateCall(FunctionToReplicate, ArgsOfReplicationFunction);
                   }
 
@@ -928,7 +906,6 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                   BasicBlock* NextBasicBlock = CurrentBasicBlock->getNextNode();
                   Instruction* FirstInstrionOfNextBB = NextBasicBlock->getFirstNonPHI();
 
-                  errs() << *F << "\n";
                 
                 for(size_t OutputIndex = 0; OutputIndex < OutputsToBeReplicated.size(); OutputIndex++ ){
 
@@ -936,7 +913,6 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                   ClonedConfigure->insertAfter(FirstInstrionOfNextBB);
                   Builder.SetInsertPoint(ClonedConfigure->getNextNode());
                   Instruction* ConfigureCheck = dyn_cast<Instruction>(Builder.CreateICmpNE(ClonedConfigure, One32Bit));
-                  errs() << *F << "\n";
                   Instruction* FirstInstructionOfNextBB = SplitBlockAndInsertIfThen(ConfigureCheck, ConfigureCheck->getNextNode(), false);
                   Builder.SetInsertPoint(FirstInstructionOfNextBB);
 
@@ -950,16 +926,14 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                   Value* OrijinalOutput = CurrentOutput.OutputAllocation;
                   Value* FirstReplicationOutput = CurrentOutput.Replications.at(0);
                   Value* SecondReplicationOutput = CurrentOutput.Replications.at(1);
-                  Value* ResultOutput = CurrentOutput.OutputAllocation;
                   Value* SizeOfOutput = CurrentOutput.MallocInstruction->getArgOperand(1);
 
                   Value* LoadedOrijinalOutput = Builder.CreateLoad(OrijinalOutput);
                   Value* LoadedFirstReplicationOutput = Builder.CreateLoad(FirstReplicationOutput);
                   Value* LoadedSecondReplicationOutput = Builder.CreateLoad(SecondReplicationOutput);
-                  Value* LoadedResultOutput = Builder.CreateLoad(ResultOutput);
                   //Value* LoadedSizeOfOutput = Builder.CreateLoad(SizeOfOutput);
-
-                  Builder.CreateCall(MajorityFunction, {LoadedOrijinalOutput, LoadedFirstReplicationOutput, LoadedSecondReplicationOutput, LoadedResultOutput, SizeOfOutput});
+                  errs() << *MajorityFunction << "\n";
+                  Builder.CreateCall(MajorityFunction, {LoadedOrijinalOutput, LoadedFirstReplicationOutput, LoadedSecondReplicationOutput, SizeOfOutput});
 
                 }
                 
@@ -987,10 +961,8 @@ char Device::ID = -2;
 char DHost ::ID = -4;
 
 
-static RegisterPass<Device> XX("CUDA2", "Hello World Pass", false, false);
-
-
-static RegisterPass<DHost> YXXX("CUDA4", "Hello World Pass",
+static RegisterPass<Device> XX("Back2BackDevice", "Hello World Pass", false, false);
+static RegisterPass<DHost> YXXX("Back2BackHost", "Hello World Pass",
                                  false /* Only looks at CFG */,
                                  false /* Analysis Pass */);
 
