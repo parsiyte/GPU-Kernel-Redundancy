@@ -758,6 +758,7 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
       Value* BitcastedCloned = Builder.CreateBitCast(NewAllocated, DestinationType);
       Cloned->setArgOperand(0, BitcastedCloned);
     }
+    errs() << *NewAllocated << "\n";
     Cloned->insertAfter(OutputToReplicate->MallocInstruction);
     Builder.SetInsertPoint(&LastInstructionOfPrevBB); 
     Value* BitcastedCloned = Builder.CreateBitCast(Builder.CreateLoad(NewAllocated), Int8PtrType);

@@ -411,9 +411,9 @@ struct RMTYDevice : public ModulePass {
 
         StoreInst *CalculatedThreadID = getTheYID(NewKernelFunction);
 
-        Builder.SetInsertPoint(CalculatedThreadID->getNextNode());
+        //Builder.SetInsertPoint(CalculatedThreadID->getNextNode());
 
-        Value *OutputIdentifier = Builder.CreateUDiv(Builder.CreateLoad(CalculatedThreadID->getPointerOperand()), Builder.CreateLoad(OriginalXAddr));
+        Instruction *OutputIdentifier = dyn_cast<Instruction>(Builder.CreateUDiv(Builder.CreateLoad(CalculatedThreadID->getPointerOperand()), Builder.CreateLoad(OriginalXAddr)));
 
         OutputIdentifier->setName("OutputIdentifier");
         Builder.CreateStore(OutputIdentifier, ThreadIDaddr);
@@ -466,7 +466,7 @@ struct RMTYDevice : public ModulePass {
 
      //   changeXID(NewKernelFunction, NewThreadId, Builder);
 
-        Builder.SetInsertPoint(Stored->getNextNode());
+        Builder.SetInsertPoint(OutputIdentifier->getNextNode());
         OutputIdentifier = Builder.CreateLoad(ThreadIDaddr);
         Instruction *ZeroCmp =
             dyn_cast<Instruction>(Builder.CreateICmpEQ(OutputIdentifier, Zero32Bit));
