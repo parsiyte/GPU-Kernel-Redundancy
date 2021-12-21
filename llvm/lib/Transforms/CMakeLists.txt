@@ -14,3 +14,6 @@ add_subdirectory(Back2Back)
 add_subdirectory(Back2BackWithStreams)
 add_subdirectory(RMT)
 add_subdirectory(RMTv2)
+
+add_subdirectory(RMTY)
+add_subdirectory(RMTv2Y)

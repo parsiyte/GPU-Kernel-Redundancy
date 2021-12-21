@@ -56,9 +56,9 @@ using namespace llvm;
 #define RevisitedSuffix "Revisited"
 
 namespace {
-struct RMTDevice : public ModulePass {
+struct RMTYDevice : public ModulePass {
   static char ID;
-  RMTDevice() : ModulePass(ID) {}
+  RMTYDevice() : ModulePass(ID) {}
 
   StoreInst *getTheXID(Function *Kernel) {
     StoreInst *ThreadIDX;
@@ -73,6 +73,27 @@ struct RMTDevice : public ModulePass {
               ThreadIDX = dyn_cast<StoreInst>(
                   dyn_cast<Instruction>(U.getUser())->getNextNode());
           else if (FunctionName == "llvm.nvvm.read.ptx.sreg.ctaid.x") {
+            BlockIDX = FunctionCall;
+          }
+        }
+      }
+    }
+    return ThreadIDX;
+  }
+
+    StoreInst *getTheYID(Function *Kernel) {
+    StoreInst *ThreadIDX;
+    CallInst *BlockIDX;
+    for (Function::iterator BB = Kernel->begin(); BB != Kernel->end(); ++BB) {
+      for (BasicBlock::iterator CurrentInstruction = BB->begin();
+           CurrentInstruction != BB->end(); ++CurrentInstruction) {
+        if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
+          StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
+          if (FunctionName == "llvm.nvvm.read.ptx.sreg.tid.y")
+            for (auto &U : FunctionCall->uses())
+              ThreadIDX = dyn_cast<StoreInst>(
+                  dyn_cast<Instruction>(U.getUser())->getNextNode());
+          else if (FunctionName == "llvm.nvvm.read.ptx.sreg.ctaid.y") {
             BlockIDX = FunctionCall;
           }
         }
@@ -113,6 +134,7 @@ struct RMTDevice : public ModulePass {
       }
     }
   }
+
   Function *createMajorityFuncton(Module &M,
                                   FunctionCallee MajorityVotingCallee) {
 
@@ -387,7 +409,7 @@ struct RMTDevice : public ModulePass {
 
 
 
-        StoreInst *CalculatedThreadID = getTheXID(NewKernelFunction);
+        StoreInst *CalculatedThreadID = getTheYID(NewKernelFunction);
 
         Builder.SetInsertPoint(CalculatedThreadID->getNextNode());
 
@@ -395,7 +417,7 @@ struct RMTDevice : public ModulePass {
 
         OutputIdentifier->setName("OutputIdentifier");
         Builder.CreateStore(OutputIdentifier, ThreadIDaddr);
-        
+
         Value *NewThreadID = Builder.CreateURem(Builder.CreateLoad(CalculatedThreadID->getPointerOperand()), Builder.CreateLoad(OriginalXAddr));
         NewThreadID->setName("NewThreadID");
         Builder.CreateStore(NewThreadID, NewThreadId);
@@ -489,7 +511,7 @@ struct RMTDevice : public ModulePass {
 
         );
         createMajorityFuncton(M, MajorityVotingCallee);
-        
+
         errs() << *NewKernelFunction << "\n";
         // Builder.CreateStore(Builder.CreateLoad(FirstRedundant),
         // TempRedundant);
@@ -500,7 +522,7 @@ struct RMTDevice : public ModulePass {
   }
 };
 
-struct RMTHost : public ModulePass {
+struct RMTYHost : public ModulePass {
   static char ID;
 
   struct CudaConfigurations {
@@ -510,7 +532,7 @@ struct RMTHost : public ModulePass {
     Value *ThreadY;
     CallInst *ConfigurationCall;
   };
-  RMTHost() : ModulePass(ID) {}
+  RMTYHost() : ModulePass(ID) {}
 
   bool isReplicate(CallInst *FunctionCall) {
     return FunctionCall->hasMetadata("Redundancy");
@@ -1049,7 +1071,7 @@ struct RMTHost : public ModulePass {
 
                                 Constant *Three = ConstantInt::get(Int32Type, 3);
                                 Configurations.GridX = GridX;
-                                //FuncCall->setArgOperand(1, Builder.CreateMul(GridX, Three));
+                                FuncCall->setArgOperand(1, Builder.CreateMul(GridX, Three));
                                 if (GridYAsInstruction != nullptr)
                                   Builder.SetInsertPoint(GridYAsInstruction->getNextNode());
 
@@ -1501,20 +1523,20 @@ struct RMTHost : public ModulePass {
 };
 
 } // namespace
-char RMTDevice::ID = -1;
-char RMTHost::ID = -2;
+char RMTYDevice::ID = -1;
+char RMTYHost::ID = -2;
 
-static RegisterPass<RMTDevice> X("RMTDevice", "Hello World Pass", false, false);
-static RegisterPass<RMTHost> XHost("RMTHost", "Hello World Pass", false, false);
+static RegisterPass<RMTYDevice> X("RMTYDevice", "Hello World Pass", false, false);
+static RegisterPass<RMTYHost> XHost("RMTYHost", "Hello World Pass", false, false);
 
 static RegisterStandardPasses Y(PassManagerBuilder::EP_EarlyAsPossible,
                                 [](const PassManagerBuilder &Builder,
                                    legacy::PassManagerBase &PM) {
-                                  PM.add(new RMTDevice());
+                                  PM.add(new RMTYDevice());
                                 });
 
 static RegisterStandardPasses YHost(PassManagerBuilder::EP_EarlyAsPossible,
                                     [](const PassManagerBuilder &Builder,
                                        legacy::PassManagerBase &PM) {
-                                      PM.add(new RMTHost());
+                                      PM.add(new RMTYHost());
                                     });
