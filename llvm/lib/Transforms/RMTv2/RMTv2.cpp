@@ -290,9 +290,8 @@ FunctionCallee GetBlockDim =
         for(int OutputIndex = 0; OutputIndex < NumberOfReplication - 1; OutputIndex++){
           NewFunctionType.push_back(PossibleOutputType);
         }
-        for(int Dimension = 0; Dimension < NumberofDimension; Dimension++ ){
-          NewFunctionType.push_back(Int32Type);
-        }
+
+        NewFunctionType.push_back(Int32Type);
         FunctionType* NewKernelType = FunctionType::get(VoidType,NewFunctionType, true);
         std::string NewKernelName = Kernel->getName().str() + "Revisited";
         
@@ -323,33 +322,32 @@ FunctionCallee GetBlockDim =
 
         Function::arg_iterator Args = NewKernelFunction->arg_end();
         Args--;
-        Value *OriginalY = Args--;
-        Value *OriginalX = Args--;
+        //Value *OriginalY = Args--;
+        Value *OriginalBased = Args--;
         Value *SecondRedundantArg = Args--;   
         Value *FirstRedundantArg = Args--;
         Value *OriginalOutput = Args--;
         std::string ValueName = OriginalOutput->getName().str();
         FirstRedundantArg->setName(ValueName + "1");
         SecondRedundantArg->setName(ValueName + "2");
-        OriginalX->setName("OriginalBlockX");
-        OriginalY->setName("OriginalY");   
+        OriginalBased->setName("OriginalBased");
 
         IRBuilder<> Builder(OutputAllocation->getNextNode());
 
         Instruction* FirstRedundant =  Builder.CreateAlloca(PossibleOutputType,nullptr, "FirstRedundant");  
         Instruction* SecondRedundant =  Builder.CreateAlloca(PossibleOutputType,nullptr, "SecondRedundant");
-        Value* OriginalXAddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalX.addr");
-        Value* OriginalYAddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalY.addr");
+        Value* OriginalBaseddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalBased.addr");
+        //Value* OriginalYAddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalY.addr");
 
-        Builder.CreateStore(OriginalX, OriginalXAddr);
+        Builder.CreateStore(OriginalBased, OriginalBaseddr);
         Builder.CreateStore(FirstRedundantArg, FirstRedundant);
         Builder.CreateStore(SecondRedundantArg, SecondRedundant);
-        Builder.CreateStore(OriginalY, OriginalYAddr);  
+        
 
         //errs() << *OutputAllocation << "\n";
         //IRBuilder<> Builder(OutputAllocation->getNextNode());
-        Instruction* TempRedundant = Builder.CreateAlloca(PossibleOutputType,nullptr, "TempRedundant");  
-        OutputAllocation->replaceAllUsesWith(TempRedundant);
+        Instruction* MetaOutput = Builder.CreateAlloca(PossibleOutputType,nullptr, "MetaOutput");  
+        OutputAllocation->replaceAllUsesWith(MetaOutput);
         
 
         Builder.CreateStore(Output,OutputAllocation );
@@ -379,7 +377,7 @@ FunctionCallee GetBlockDim =
     
         Value* BlockID = Builder.CreateUDiv(
             BlockIDXCall,
-            Builder.CreateLoad(OriginalXAddr)
+            Builder.CreateLoad(OriginalBaseddr)
          );
 
         BlockID->setName("BlockID");
@@ -387,7 +385,7 @@ FunctionCallee GetBlockDim =
 
         Value* BlockID2 = Builder.CreateURem(
             BlockIDXCall,
-            Builder.CreateLoad(OriginalXAddr)
+            Builder.CreateLoad(OriginalBaseddr)
          );
          BlockID2->setName("BlockID2");
         Builder.CreateStore(BlockID2, BlockIdaddr2);
@@ -447,7 +445,7 @@ FunctionCallee GetBlockDim =
         Instruction *ThenTerm, *FirstElseIfCondTerm;
         SplitBlockAndInsertIfThenElse(ZeroCmp, ZeroCmp->getNextNode(), &ThenTerm, &FirstElseIfCondTerm); 
         Builder.SetInsertPoint(ThenTerm);
-        Builder.CreateStore(Builder.CreateLoad(OutputAllocation), TempRedundant);
+        Builder.CreateStore(Builder.CreateLoad(OutputAllocation), MetaOutput);
 
 
         Instruction *ElseIfTerm, *SecondElseTerm;
@@ -456,7 +454,7 @@ FunctionCallee GetBlockDim =
         Instruction* OneCmp = dyn_cast<Instruction>(Builder.CreateICmpEQ(BlockID, One32Bit));
         SplitBlockAndInsertIfThenElse(OneCmp, OneCmp->getNextNode(), &ElseIfTerm, &SecondElseTerm); 
         Builder.SetInsertPoint(ElseIfTerm);
-        Builder.CreateStore(Builder.CreateLoad(FirstRedundant), TempRedundant);
+        Builder.CreateStore(Builder.CreateLoad(FirstRedundant), MetaOutput);
 
 
         Builder.SetInsertPoint(SecondElseTerm);
@@ -464,7 +462,7 @@ FunctionCallee GetBlockDim =
         Instruction* TwoCmp = dyn_cast<Instruction>(Builder.CreateICmpEQ(BlockID, Two32Bit));
         Instruction* NewBranch  = SplitBlockAndInsertIfThen(TwoCmp, TwoCmp->getNextNode(), false);
         Builder.SetInsertPoint(NewBranch);
-        Builder.CreateStore(Builder.CreateLoad(SecondRedundant), TempRedundant);
+        Builder.CreateStore(Builder.CreateLoad(SecondRedundant), MetaOutput);
 
 
         MDNode *N = MDNode::get(Context, MDString::get(Context, "kernel"));
@@ -1139,10 +1137,8 @@ FunctionType * getTheNewKernelType(FunctionType* OriginalFunctionType, std::vect
      }
   }
 
-  for(int DimensionIndex = 0; DimensionIndex < NumberofDimension; DimensionIndex++){
-    NewKernelTypes.push_back(Int32Type);
-  }
-
+  NewKernelTypes.push_back(Int32Type);
+    
   NewKernelFunctionType = FunctionType::get(OriginalFunctionType->getReturnType(), NewKernelTypes, true); 
   
   return NewKernelFunctionType;
@@ -1231,11 +1227,11 @@ FunctionType * getTheNewKernelType(FunctionType* OriginalFunctionType, std::vect
               }
 
               NewArgs.push_back(Configurations.OriginalX);
-              NewArgs.push_back(Configurations.OriginalY);
+              //NewArgs.push_back(Configurations.OriginalY);
 
               FunctionType* NewKernelType = getTheNewKernelType(FunctionCall->getFunctionType(), OutputsToBeReplicated);
               std::string NewKernelName = FunctionName.str() + RevisitedSuffix;
-              errs() << NewKernelName << "\n";
+              
               FunctionCallee NewKernelAsCallee =  M.getOrInsertFunction(NewKernelName, NewKernelType);
               Instruction* NewFunctionCall = Builder.CreateCall(NewKernelAsCallee, NewArgs);
 

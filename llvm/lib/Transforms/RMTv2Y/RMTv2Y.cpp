@@ -127,7 +127,7 @@ struct RMTv2YDevice : public ModulePass {
       }
     }
   }
-
+/*
   void changeYID(Function *Kernel, Value *ToBeChange) {
     for (Function::iterator BB = Kernel->begin(); BB != Kernel->end(); ++BB) {
       for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
@@ -142,7 +142,7 @@ struct RMTv2YDevice : public ModulePass {
       }
     }
   }  
-  
+  */
   Function* createMajorityFuncton(Module &M, FunctionCallee MajorityVotingCallee){
 
 
@@ -294,8 +294,11 @@ struct RMTv2YDevice : public ModulePass {
       Value *Zero32Bit = ConstantInt::get(Int32Type, 0);
       Value *One32Bit = ConstantInt::get(Int32Type, 1);
       Value *Two32Bit = ConstantInt::get(Int32Type, 2);
+      Function* ThreadIDX = M.getFunction("llvm.nvvm.read.ptx.sreg.tid.x");
+      //Function* ThreadIDY = M.getFunction("llvm.nvvm.read.ptx.sreg.tid.y");
+      Function* ThreadIDY = dyn_cast<Function>(M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.tid.y", ThreadIDX->getFunctionType()).getCallee());
       Function* BlockIDX = M.getFunction("llvm.nvvm.read.ptx.sreg.ctaid.x");
-      Function* BlockIDY = dyn_cast_or_null<Function>(M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.ctaid.y", BlockIDX->getFunctionType()).getCallee());
+      Function* BlockIDY =  dyn_cast<Function>(M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.ctaid.y", BlockIDX->getFunctionType()).getCallee());
 
      for(unsigned int Index = 0; Index < Annotations->getNumOperands(); Index++){
         MDNode* Operand = Annotations->getOperand(Index);
@@ -325,9 +328,9 @@ struct RMTv2YDevice : public ModulePass {
         for(int OutputIndex = 0; OutputIndex < NumberOfReplication - 1; OutputIndex++){
           NewFunctionType.push_back(PossibleOutputType);
         }
-        for(int Dimension = 0; Dimension < NumberofDimension; Dimension++ ){
+
           NewFunctionType.push_back(Int32Type);
-        }
+          
         FunctionType* NewKernelType = FunctionType::get(VoidType,NewFunctionType, true);
         std::string NewKernelName = Kernel->getName().str() + "Revisited";
 
@@ -358,33 +361,29 @@ struct RMTv2YDevice : public ModulePass {
 
         Function::arg_iterator Args = NewKernelFunction->arg_end();
         Args--;
-        Value *OriginalY = Args--;
-        Value *OriginalX = Args--;
+        Value *OriginalBased = Args--;
         Value *SecondRedundantArg = Args--;
         Value *FirstRedundantArg = Args--;
         Value *OriginalOutput = Args--;
         std::string ValueName = OriginalOutput->getName().str();
         FirstRedundantArg->setName(ValueName + "1");
         SecondRedundantArg->setName(ValueName + "2");
-        OriginalX->setName("OriginalBlockX");
-        OriginalY->setName("OriginalY");
+        OriginalBased->setName("OriginalBased");
 
         IRBuilder<> Builder(OutputAllocation->getNextNode());
 
         Instruction* FirstRedundant =  Builder.CreateAlloca(PossibleOutputType,nullptr, "FirstRedundant");
         Instruction* SecondRedundant =  Builder.CreateAlloca(PossibleOutputType,nullptr, "SecondRedundant");
-        Value* OriginalXAddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalX.addr");
-        Value* OriginalYAddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalY.addr");
+        Value* OriginalBasedAddr = Builder.CreateAlloca(Int32Type,nullptr, "OriginalBased.addr");
 
-        Builder.CreateStore(OriginalX, OriginalXAddr);
+        Builder.CreateStore(OriginalBased, OriginalBasedAddr);
         Builder.CreateStore(FirstRedundantArg, FirstRedundant);
         Builder.CreateStore(SecondRedundantArg, SecondRedundant);
-        Builder.CreateStore(OriginalY, OriginalYAddr);
 
         //errs() << *OutputAllocation << "\n";
         //IRBuilder<> Builder(OutputAllocation->getNextNode());
-        Instruction* TempRedundant = Builder.CreateAlloca(PossibleOutputType,nullptr, "TempRedundant");
-        OutputAllocation->replaceAllUsesWith(TempRedundant);
+        Instruction* MetaOutput = Builder.CreateAlloca(PossibleOutputType,nullptr, "MetaOutput");
+        OutputAllocation->replaceAllUsesWith(MetaOutput);
 
 
         Builder.CreateStore(Output,OutputAllocation );
@@ -413,7 +412,7 @@ struct RMTv2YDevice : public ModulePass {
 
         Value* BlockID = Builder.CreateUDiv(
             BlockIDYCall,
-            Builder.CreateLoad(OriginalYAddr)
+            Builder.CreateLoad(OriginalBasedAddr)
          );
 
         BlockID->setName("BlockID");
@@ -421,7 +420,7 @@ struct RMTv2YDevice : public ModulePass {
 
         Value* BlockID2 = Builder.CreateURem(
             BlockIDYCall,
-            Builder.CreateLoad(OriginalYAddr)
+            Builder.CreateLoad(OriginalBasedAddr)
          );
          BlockID2->setName("BlockID2");
         Builder.CreateStore(BlockID2, BlockIdaddr2);
@@ -429,7 +428,6 @@ struct RMTv2YDevice : public ModulePass {
          StoreInst*  I =  getTheYID(NewKernelFunction);
           
 
-       // errs() << *I << "\n";
 
 /*
 
@@ -468,8 +466,6 @@ struct RMTv2YDevice : public ModulePass {
             {Builder.CreateGlobalStringPtr("%d \n"),
              Builder.CreateBitCast(PrintFAlloca, Int8ptrType)
              });
-
-
 */
         if(I != nullptr)
          changeYID(NewKernelFunction,BlockIDYCall,BlockIdaddr2, Builder);
@@ -482,7 +478,7 @@ struct RMTv2YDevice : public ModulePass {
         Instruction *ThenTerm, *FirstElseIfCondTerm;
         SplitBlockAndInsertIfThenElse(ZeroCmp, ZeroCmp->getNextNode(), &ThenTerm, &FirstElseIfCondTerm);
         Builder.SetInsertPoint(ThenTerm);
-        Builder.CreateStore(Builder.CreateLoad(OutputAllocation), TempRedundant);
+        Builder.CreateStore(Builder.CreateLoad(OutputAllocation), MetaOutput);
 
 
         Instruction *ElseIfTerm, *SecondElseTerm;
@@ -491,7 +487,7 @@ struct RMTv2YDevice : public ModulePass {
         Instruction* OneCmp = dyn_cast<Instruction>(Builder.CreateICmpEQ(BlockID, One32Bit));
         SplitBlockAndInsertIfThenElse(OneCmp, OneCmp->getNextNode(), &ElseIfTerm, &SecondElseTerm);
         Builder.SetInsertPoint(ElseIfTerm);
-        Builder.CreateStore(Builder.CreateLoad(FirstRedundant), TempRedundant);
+        Builder.CreateStore(Builder.CreateLoad(FirstRedundant), MetaOutput);
 
 
         Builder.SetInsertPoint(SecondElseTerm);
@@ -499,7 +495,7 @@ struct RMTv2YDevice : public ModulePass {
         Instruction* TwoCmp = dyn_cast<Instruction>(Builder.CreateICmpEQ(BlockID, Two32Bit));
         Instruction* NewBranch  = SplitBlockAndInsertIfThen(TwoCmp, TwoCmp->getNextNode(), false);
         Builder.SetInsertPoint(NewBranch);
-        Builder.CreateStore(Builder.CreateLoad(SecondRedundant), TempRedundant);
+        Builder.CreateStore(Builder.CreateLoad(SecondRedundant), MetaOutput);
 
 
         MDNode *N = MDNode::get(Context, MDString::get(Context, "kernel"));
@@ -1174,9 +1170,7 @@ FunctionType * getTheNewKernelType(FunctionType* OriginalFunctionType, std::vect
      }
   }
 
-  for(int DimensionIndex = 0; DimensionIndex < NumberofDimension; DimensionIndex++){
     NewKernelTypes.push_back(Int32Type);
-  }
 
   NewKernelFunctionType = FunctionType::get(OriginalFunctionType->getReturnType(), NewKernelTypes, true);
 
@@ -1265,7 +1259,6 @@ FunctionType * getTheNewKernelType(FunctionType* OriginalFunctionType, std::vect
                  }
               }
 
-              NewArgs.push_back(Configurations.OriginalX);
               NewArgs.push_back(Configurations.OriginalY);
 
               FunctionType* NewKernelType = getTheNewKernelType(FunctionCall->getFunctionType(), OutputsToBeReplicated);
