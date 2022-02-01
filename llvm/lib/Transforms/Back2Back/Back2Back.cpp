@@ -51,7 +51,7 @@ using namespace llvm;
 #define ArgumanOrder 1 // Cuda Register Fonksiyonu çağrılırken 1 arguman fonksiyonu veriyor.
     // Gelecek Cuda versiyonlarında değişme ihtimaline karşı en üste tanımladık.
 #define NumberOfReplication 3
-#define STREAMENABLED false
+#define STREAMENABLED true
 
 namespace {
 
@@ -796,6 +796,8 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
                 Builder.SetInsertPoint(FirstInstructionOfPrevBB);
                 StreamArray = Builder.CreateAlloca(ArrayType, nullptr, "streams");
                 Value* IthStream = Builder.CreateInBoundsGEP(StreamArray, {Zero32bit, Zero32bit}, "arrayidx"); // Bunu zaten özgün çağrıya verdiğimiz için direkt 0 verebiliriz.
+                errs() << *IthStream->getType() << "\n";  
+                errs() << *StreamType << "\n";  
                 StreamCreateFunction = M.getOrInsertFunction(StreamCreateFunctionName, Int32Type, IthStream->getType(), Int32Type);
                 Builder.CreateCall(StreamCreateFunction, {IthStream, CudaStreamNonBlocking});
                 Value* LoadedStream = Builder.CreateLoad(IthStream);

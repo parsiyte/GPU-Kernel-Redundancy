@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+
 #include "clang/AST/Expr.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Sema/ParsedAttr.h"
@@ -20,6 +21,7 @@
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/ScopeInfo.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 #include <string>
 
@@ -328,39 +330,27 @@ static Attr *handleOpenCLUnrollHint(Sema &S, Stmt *St, const ParsedAttr &A,
 static Attr *handleQualityAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceRange Range) {
 
   llvm::errs() << "handleQualityAttr " <<  A.getNumArgs() << "\n";
-  IdentifierLoc *PragmaNameLoc = A.getArgAsIdent(0);
-  IdentifierLoc *OptionLoc = A.getArgAsIdent(1);
-  Expr *ValueExprF = nullptr;
-  Expr *ValueExprPossibleOut = nullptr;
-  bool PragmaMain = OptionLoc->Ident->getName() == "main";
-  bool PragmaFunct = OptionLoc->Ident->getName() == "in";
-    
+  
+  QualityAttr::SchemeType Scheme;
   QualityAttr::OptionType Option = QualityAttr::In;
-  /*
-  StringRef a = "4";
-  QualityAttr::OptionType Option;
-  if (PragmaMain) {
-    Option = QualityAttr::Main;
-    ValueExprF = A.getArgAsExpr(2);
-  } else if (PragmaFunct) {
-    Option = QualityAttr::In;
-    ValueExprF = A.getArgAsExpr(2);
-  } else {
-    printf("Error, no main or funct\n");
-  }
+  llvm::StringRef SchemeName = A.getArgAsIdent(4)->Ident->getName();
+  if( SchemeName == "MKES")
+    Scheme = QualityAttr::mkes;
+  else if(SchemeName == "XBSKE")
+    Scheme =QualityAttr::xbske;
+  else if(SchemeName == "YBSKE")
+    Scheme =QualityAttr::ybske;
+  else if(SchemeName == "XTSKE")
+    Scheme =QualityAttr::xtske;
+  else if(SchemeName == "YTSKE")
+    Scheme =QualityAttr::xtske;
+  else
+    Scheme =QualityAttr::mke;
 
   
-  if (!ValueExprF) {
-    printf("Error in Sema getting N\n");
-  }
-*/
-  //return QualityAttr::CreateImplicit(S.Context, Option, ValueExprF, ValueExpr, A.getRange());
-  //return QualityAttr::CreateImplicit(S.Context, Option, ValueExprF, ValueExpr,SecOp, A.getRange());
-  return QualityAttr::CreateImplicit(S.Context,Option,
-  A.getArgAsExpr(2), A.getArgAsExpr(3),A.getArgAsExpr(4),A.getArgAsExpr(5),A.getArgAsExpr(6),
-  "Out", 
-  A.getArgAsExpr(7),A.getArgAsExpr(8),A.getArgAsExpr(9),A.getArgAsExpr(10),A.getArgAsExpr(11),
-  A.getRange());
+  
+  return QualityAttr::CreateImplicit(S.Context,Option,A.getArgAsExpr(2),"Out",A.getArgAsExpr(3),"Scheme", Scheme, A.getRange());
+  //return QualityAttr::CreateImplicit(S.Context,Option,A.getArgAsExpr(2),"Out", A.getArgAsExpr(3), "Scheme", A.getArgAsExpr(4), A.getRange());
 }
 
 

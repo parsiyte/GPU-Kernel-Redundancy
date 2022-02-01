@@ -17,3 +17,4 @@ add_subdirectory(RMTv2)
 
 add_subdirectory(RMTY)
 add_subdirectory(RMTv2Y)
+add_subdirectory(FTGPGPU)

@@ -1026,6 +1026,7 @@ namespace {
 struct PragmaQualityInfo {
   Token PragmaName;
   Token Option;
+  Token SchemeInfo;
   ArrayRef<Token> Toks;
 };
 } // end anonymous namespace
@@ -1056,63 +1057,51 @@ static std::string PragmaLoopHintString(Token PragmaName, Token Option) {
 bool Parser::HandlePragmaQuality(QualityHint &Hint) {
   llvm::errs() << "HandlePragmaQuality\n";
   assert(Tok.is(tok::annot_pragma_quality));
-  PragmaQualityInfo *Info =
-      static_cast<PragmaQualityInfo *>(Tok.getAnnotationValue());
+  PragmaQualityInfo *Info = static_cast<PragmaQualityInfo *>(Tok.getAnnotationValue());
 
   IdentifierInfo *PragmaNameInfo = Info->PragmaName.getIdentifierInfo();
-  Hint.PragmaNameLoc = IdentifierLoc::create(
-      Actions.Context, Info->PragmaName.getLocation(), PragmaNameInfo);
+  Hint.PragmaNameLoc = IdentifierLoc::create(Actions.Context, Info->PragmaName.getLocation(), PragmaNameInfo);
 
   IdentifierInfo *OptionInfo = Info->Option.getIdentifierInfo();
-  Hint.OptionLoc = IdentifierLoc::create(
-      Actions.Context, Info->Option.getLocation(), OptionInfo);
+  Hint.OptionLoc = IdentifierLoc::create(Actions.Context, Info->Option.getLocation(), OptionInfo);
 
-  bool OptionMain = OptionInfo->isStr("main");
-  bool OptionFunct = OptionInfo->isStr("in");
+  //bool OptionMain = OptionInfo->isStr("main");
+  //bool OptionFunct = OptionInfo->isStr("in");
 
   llvm::ArrayRef<Token> Toks = Info->Toks;
   PP.EnterTokenStream(Toks, /*DisableMacroExpansion=*/false, false);
   ConsumeAnnotationToken();
-  std::string Inputs = "";
-  std::string Outputs = "";
+  
+  Hint.SchemeType =  IdentifierLoc::create(Actions.Context, Toks[5].getLocation(), Toks[5].getIdentifierInfo());
   int Index = 0;
   
   ConsumeAnyToken();
   while(Tok.getIdentifierInfo()->getName() != "out"){
-    llvm::errs() << Tok.getIdentifierInfo()->getName() << "\n";
-    if(Index == 0)
+    llvm::errs() << Tok.getIdentifierInfo()->getName() << "-\n";
       Hint.Inputs = ParseConstantExpression().get();
-    else if(Index == 1)
-      Hint.Inputs2 = ParseConstantExpression().get();
-    else if(Index == 2)
-      Hint.Inputs3 = ParseConstantExpression().get();
-    else if(Index == 3)
-      Hint.Inputs4 = ParseConstantExpression().get();
-    else if(Index == 4)
-      Hint.Inputs5 = ParseConstantExpression().get();
-    Index++;
   }
-  
-    llvm::errs() << Tok.getIdentifierInfo()->getName() << "o\n";
   ConsumeAnyToken();
-    llvm::errs() << Tok.getIdentifierInfo()->getName() << "o\n";
+  
   Index = 0;
-  while (Tok.isNot(tok::eof)){
+  while (Tok.getIdentifierInfo()->getName() != "Scheme"){
     llvm::errs() << Tok.getIdentifierInfo()->getName() << "\n";
-    llvm::errs() << Index << "\n";
-    if(Index == 0)
-      Hint.Outputs = ParseConstantExpression().get();
-    else if(Index == 1)
-      Hint.Outputs2 = ParseConstantExpression().get();
-    else if(Index == 2)
-      Hint.Outputs3 = ParseConstantExpression().get();
-    else if(Index == 3)
-      Hint.Outputs4 = ParseConstantExpression().get();
-    else if(Index == 4)
-      Hint.Outputs5 = ParseConstantExpression().get();
-
-    Index++;
+    Hint.Outputs = ParseConstantExpression().get();
   }
+  ConsumeAnyToken();
+  
+  Index = 0;
+  ConsumeAnyToken();
+  /*
+  while (Tok.isNot(tok::eof)){
+    auto Redundance = Tok.getIdentifierInfo()->getName();
+    llvm::errs() << Redundance << "++\n";
+    Hint.RedundanceScheme = Redundance;
+    //Hint.RedundanceScheme = ParseConstantExpression().get();
+    Index++;
+    ConsumeAnyToken();
+  }
+ */
+  
     // Tokens following an error in an ill-formed constant expression will
     // remain in the token stream and must be removed.
   if (Tok.isNot(tok::eof)) {
@@ -2916,29 +2905,25 @@ void PragmaQualityHandler::HandlePragma(Preprocessor &PP,
                                          PragmaIntroducer Introducer,
                                          Token &Tok) {
   Token PragmaName = Tok;
-  llvm::errs() << Tok.getIdentifierInfo()->getName() << "1\n";
+  
   SmallVector<Token, 1> TokenList;
   PP.Lex(Tok);
   if (Tok.isNot(tok::identifier)) {
     printf("Error, not a identifier token for the option ofpragma quality\n");
     return;
   }
-  llvm::errs() << Tok.getIdentifierInfo()->getName() << "2\n";
+  
 
   Token Option = Tok;
   IdentifierInfo *OptionInfo = Tok.getIdentifierInfo();
   bool OptionValid = llvm::StringSwitch<bool>(OptionInfo->getName())
-                           .Case("main", true)
                            .Case("in", true)
                            .Default(false);
   if (!OptionValid) {
     printf("Error, option not recognized for pragma quality\n");
     return;
   }
-  while( Tok.getIdentifierInfo()->getName() == "Out"){
-    PP.Lex(Tok);
-  }
-  
+
   auto *Info = new (PP.getPreprocessorAllocator()) PragmaQualityInfo;
   if (!ParseQualityValue(PP, Tok, PragmaName, Option, *Info))
     return;

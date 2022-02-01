@@ -16,6 +16,7 @@
 #include "clang/AST/Expr.h"
 #include "clang/AST/PrettyDeclStackTrace.h"
 #include "clang/Basic/Attributes.h"
+#include "clang/Basic/LLVM.h"
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Parse/LoopHint.h"
 #include "clang/Parse/Parser.h"
@@ -2183,9 +2184,8 @@ ParsedAttributesWithRange TempAttrs(AttrFactory);
       continue;
     if (Hint.OptionLoc->Ident->getName() == "in") {
       ArgsUnion ArgHints[] = {Hint.PragmaNameLoc, Hint.OptionLoc,
-                            Hint.Inputs, Hint.Inputs2, Hint.Inputs3, Hint.Inputs4, Hint.Inputs5, 
-                            Hint.Outputs, Hint.Outputs2, Hint.Outputs3, Hint.Outputs4, Hint.Outputs5, 
-                            };
+                            Hint.Inputs,
+                            Hint.Outputs, Hint.SchemeType};
       TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
                      Hint.PragmaNameLoc->Loc, ArgHints, 15,
                      AsmLabelAttr::AS_Pragma);

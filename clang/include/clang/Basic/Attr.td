@@ -3169,9 +3169,14 @@ def Quality : Attr {
   let Args = [EnumArgument<"Option", "OptionType",
                           ["main", "in"],
                           ["Main", "In"]>,
-              ExprArgument<"Inputs">,ExprArgument<"Inputs2">, ExprArgument<"Inputs3">, ExprArgument<"Inputs4">, ExprArgument<"Inputs5">,
-              StringArgument<"Out">, 
-              ExprArgument<"Outputs">, ExprArgument<"Outputs2">, ExprArgument<"Outputs3">, ExprArgument<"Outputs4">, ExprArgument<"Outputs5">];
+              ExprArgument<"Inputs">, StringArgument<"Out">, ExprArgument<"Outputs">,  StringArgument<"SchemeStr">, 
+
+             EnumArgument<"Scheme", "SchemeType",
+                          ["MKE", "MKES", "XBSKE", "YBKSE", "XTSKE", "YTSKE"],
+                          ["mke", "mkes", "xbske", "ybske", "xtske", "ytske"]>
+              
+              
+              ];
   let AdditionalMembers = [{
   static const char *getOptionName(int Option) {
     switch(Option) {
