@@ -11,6 +11,7 @@
 #include <string>
 
 #include "MKE.cpp"
+#include "SKE.cpp"
 using namespace llvm;
 
 
@@ -22,14 +23,11 @@ struct Device : public ModulePass {
   Device() : ModulePass(ID) {}
 
   bool runOnModule(Module &M) override {
-
-    /*
-    Auxiliary* PassAuxiliary = (Auxiliary*)malloc(sizeof(Auxiliary*));
+    Auxiliary* PassAuxiliary = (Auxiliary*)malloc(sizeof(Auxiliary));
     LLVMContext& Context = M.getContext();
     PassAuxiliary->VoidType = Type::getVoidTy(Context);
     PassAuxiliary->Int32Type = Type::getInt32Ty(Context);
     PassAuxiliary->Int64Type = Type::getInt64Ty(Context);
-    errs() << "Burada" << "\n";
     PassAuxiliary->BlockDimX = M.getFunction("llvm.nvvm.read.ptx.sreg.ntid.x");
     PassAuxiliary->BlockIDX = M.getFunction("llvm.nvvm.read.ptx.sreg.ctaid.x");
     PassAuxiliary->ThreadIDX = M.getFunction("llvm.nvvm.read.ptx.sreg.tid.x");
@@ -39,6 +37,8 @@ struct Device : public ModulePass {
     NamedMDNode *Annotations = M.getNamedMetadata("nvvm.annotations");
     std::vector<Function *> ValidKernels = getValidKernels(Annotations);
     MDNode *KernelNode = MDNode::get(Context, MDString::get(Context, "kernel"));
+    MDNode *TempN = MDNode::get(Context, ConstantAsMetadata::get(ConstantInt::get(PassAuxiliary->Int32Type, 1)));
+    MDNode *Con = MDNode::concatenate(KernelNode, TempN);
     
     for (auto& Kernel : ValidKernels) {
       FunctionType* FuncType = Kernel->getFunctionType();
@@ -54,18 +54,13 @@ struct Device : public ModulePass {
       
       if(M.getFunction(MajorityFunctionName) == nullptr) {
         Function* MajorityVotingFunction = createDeviceMajorityVotingFunction(M, PassAuxiliary, OutputPtrType, MajorityFunctionName);
-        MDNode *TempN = MDNode::get(Context, ConstantAsMetadata::get(ConstantInt::get(PassAuxiliary->Int32Type, 1)));
-        MDNode *Con = MDNode::concatenate(KernelNode, TempN);
         Annotations->addOperand(MDNode::concatenate(MDNode::get(Context, ValueAsMetadata::get(MajorityVotingFunction)), Con));
       }
 
     }
-    */
+    
     return false;
   }
-  
-
-
 
 };
 
@@ -130,8 +125,10 @@ struct Host : public ModulePass {
                   MyPass->setPass(new MKE());
                 }else if (Scheme == "MKES") {
                   MyPass->setPass(new MKE(true));
-                  
+                }else if (Scheme == "XBSKE")
+                {MyPass->setPass(new SKE());
                 }
+                
 
                 MyPass->runThePass();
               }else if (FunctionName == "cudaConfigureCall") {
@@ -175,7 +172,7 @@ static RegisterPass<Host> HostRegister("Host", "FTGPGPU Host Pass", false, false
 
 
 
-static RegisterStandardPasses Y(PassManagerBuilder::EP_EarlyAsPossible,
+static RegisterStandardPasses YDevice(PassManagerBuilder::EP_EarlyAsPossible,
                                 [](const PassManagerBuilder &Builder,
                                    legacy::PassManagerBase &PM) {
                                   PM.add(new Device());

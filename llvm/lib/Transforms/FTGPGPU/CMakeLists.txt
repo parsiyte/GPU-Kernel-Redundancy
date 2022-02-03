@@ -14,6 +14,7 @@ add_llvm_library( LLVMFTGPGPU MODULE BUILDTREE_ONLY
   main.cpp
   FTGPGPUPass.cpp
   MKE.cpp
+  SKE.cpp
   DEPENDS
   intrinsics_gen
   PLUGIN_TOOL

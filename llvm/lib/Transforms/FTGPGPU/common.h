@@ -70,6 +70,8 @@ struct Output {
   Instruction* Replications[NumberOfReplication-1];
 };
 
+enum Dimension { X, Y };
+enum ReplicationBased { Block, Thread };
 
 struct Auxiliary{
   FunctionCallee StreamCreateFunction;
