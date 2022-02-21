@@ -1,3 +1,6 @@
+#ifndef MYHEADEFILE_H
+#define MYHEADEFILE_H
+
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Argument.h"
@@ -58,6 +61,7 @@ using namespace llvm;
 #define NumberOfReplication 3
 #define StreamCreateFunctionName "cudaStreamCreateWithFlags"
 #define StreamArgIndex 5
+#define RevisitedSuffix "Revisited"
 
 
 struct Output {
@@ -69,9 +73,18 @@ struct Output {
   StringRef Name;
   Instruction* Replications[NumberOfReplication-1];
 };
-
-enum Dimension { X, Y };
+/*
+enum Dimensions { X, Y };
 enum ReplicationBased { Block, Thread };
+
+struct CudaConfigurations{
+  Instruction* BlockX;
+  Instruction* BlockY;
+  Instruction* ThreadX;
+  Instruction* ThreadY;
+};
+*/
+
 
 struct Auxiliary{
   FunctionCallee StreamCreateFunction;
@@ -82,6 +95,7 @@ struct Auxiliary{
   Function*  CudaRegisterFunction;
   Function*  CudaSetupArgument;
   Function*  CudaLaunch;
+
 
   Function*  ThreadIDX;
   Function*  BlockIDX;
@@ -105,17 +119,117 @@ struct Auxiliary{
 
   Value* Zero32Bit;
   Value* One32Bit;
+  Value* Two32Bit;
+  Value* Three32Bit;
   Value* MinusOne32Bit;
   Value* CudaStreamNonBlocking;
-
+  
   Output* OutputObject;
 
+  Value* CudaConfiguration[8];
 
 
-
-
+  Constant* Four64Bit;
+  Constant* Eight64Bit;
 
 };
+
+inline void changeXID(Function *Kernel, Value* NewCreatedCall, Value *ToBeChange, IRBuilder<> Builder) {
+    for (Function::iterator BB = Kernel->begin(); BB != Kernel->end(); ++BB) {
+      for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
+        if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
+          if(FunctionCall == NewCreatedCall)
+            continue;
+          StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
+          if (FunctionName == "llvm.nvvm.read.ptx.sreg.ctaid.x") {
+            FunctionCall->replaceAllUsesWith(Builder.CreateLoad(ToBeChange));
+          } 
+        }
+      }
+    }
+  }
+
+inline void registerTheFunction(Function* FunctionToRegister, Auxiliary* PassAuxiliary){
+
+  Function *CudaGlobalRegister = PassAuxiliary->CudaGlobalRegisterFunction;
+  Function *CudaRegister = PassAuxiliary->CudaRegisterFunction;
+  std::string FunctionName = FunctionToRegister->getName();
+  BasicBlock *CudaRegisterBlock = dyn_cast<BasicBlock>(CudaGlobalRegister->begin());
+  Instruction *FirstInstruction = dyn_cast<Instruction>(CudaRegisterBlock->begin());
+  IRBuilder<> Builder(FirstInstruction);
+
+  Value *FunctionNameAsGlobal =  Builder.CreateGlobalStringPtr(FunctionName);
+  Builder.CreateCall( CudaRegister,
+      {FirstInstruction->getOperand(0),
+        Builder.CreateBitCast(FunctionToRegister, PassAuxiliary->Int8PtrType),
+        FunctionNameAsGlobal, FunctionNameAsGlobal,
+        PassAuxiliary->MinusOne32Bit,
+        PassAuxiliary->Int8PtrNull,
+        PassAuxiliary->Int8PtrNull,
+        PassAuxiliary->Int8PtrNull,
+        PassAuxiliary->Int8PtrNull,
+        PassAuxiliary->Int32PtrNull});
+
+}
+
+       
+inline void CudaConfigure(CallInst *FunctionCall, Value* CudaConfigurations[4]) {
+  for(int ArgIndex = 0; ArgIndex < 4; ArgIndex++){
+    LoadInst* LoadInstruction = dyn_cast_or_null<LoadInst>(FunctionCall->getArgOperand(ArgIndex));
+    GetElementPtrInst* GEP = dyn_cast_or_null<GetElementPtrInst>(LoadInstruction->getPointerOperand());
+    AllocaInst* AllocaCoerce  = dyn_cast_or_null<AllocaInst>(GEP->getPointerOperand());
+    for(Use& U : AllocaCoerce->uses()){
+      User* User = U.getUser();
+      BitCastInst* Casted = dyn_cast_or_null<BitCastInst>(User);
+      if(Casted != nullptr){
+        Instruction* TempInstruction = Casted;
+        while(dyn_cast_or_null<MemCpyInst>(TempInstruction) == nullptr)
+          TempInstruction = TempInstruction->getNextNode();
+        MemCpyInst* DimensionMemoryCopy = dyn_cast_or_null<MemCpyInst>(TempInstruction);
+        BitCastInst* CopySrc = dyn_cast_or_null<BitCastInst>(DimensionMemoryCopy->getArgOperand(1));
+        AllocaInst* Alloca  = dyn_cast_or_null<AllocaInst>(CopySrc->getOperand(0));
+        TempInstruction = Alloca;
+        while(true){  
+          if(MemCpyInst* MemoryInstruction = dyn_cast_or_null<MemCpyInst>(TempInstruction)){
+            BitCastInst* PossibleBitCast = dyn_cast_or_null<BitCastInst>(MemoryInstruction->getArgOperand(0));
+            AllocaInst* PossibleAllocation  = dyn_cast_or_null<AllocaInst>(PossibleBitCast->getOperand(0));
+            if(PossibleAllocation == Alloca){
+              BitCastInst* CopyDestination = dyn_cast_or_null<BitCastInst>(MemoryInstruction->getArgOperand(1));
+              AllocaInst* DestinationAllocation  = dyn_cast_or_null<AllocaInst>(CopyDestination->getOperand(0));
+              TempInstruction = DestinationAllocation;
+              while(true){
+                if(CallInst* DimensionCall = dyn_cast_or_null<CallInst>(TempInstruction)){
+                  StringRef FunctionName = DimensionCall->getCalledFunction()->getName();
+                  if(FunctionName.contains("dim3") && DimensionCall->hasMetadata("Multiplication") == false && 
+                      DimensionCall->getArgOperand(0) == DestinationAllocation){
+                        errs() <<  ArgIndex%2 + 1 << "\n";
+                        CudaConfigurations[ArgIndex] = DimensionCall->getArgOperand(ArgIndex%2 + 1);
+                        CudaConfigurations[ArgIndex+4] = DimensionCall;
+                    break;
+                  }
+                }
+                TempInstruction = TempInstruction->getNextNode();
+              }
+              break;
+            }
+          }
+          TempInstruction = TempInstruction->getNextNode();
+        }
+      }
+    }
+  }
+}
+
+inline FunctionType* getTheNewKernelFunctionType(std::vector<Value *> Args, Type* ReturnType){
+
+  std::vector<Type * > NewKernelTypes;
+  for(size_t ArgIndex = 0; ArgIndex < Args.size(); ArgIndex++){
+    errs() << *Args.at(ArgIndex) << "\n";
+    NewKernelTypes.push_back(Args.at(ArgIndex)->getType());
+  }
+
+  return FunctionType::get(ReturnType, NewKernelTypes, true);
+}
 
 inline bool isReplicate(CallInst *FunctionCall) {
   return FunctionCall->hasMetadata(RedundantString);
@@ -326,7 +440,10 @@ inline Function *createMajorityVoting(Module& M, PointerType *MajorityVotingPoin
   }
 
   Builder.CreateCall(CudaLaunch, {Builder.CreateBitCast(  MajorityVotingFunction, Int8PtrType)});
+  registerTheFunction(MajorityVotingFunction, PassAuxiliary);
 
+
+  /*
   BasicBlock *CudaRegisterBlock = dyn_cast<BasicBlock>(CudaGlobalRegister->begin());
   Instruction *FirstInstruction = dyn_cast<Instruction>(CudaRegisterBlock->begin());
   Builder.SetInsertPoint(FirstInstruction);
@@ -342,7 +459,7 @@ inline Function *createMajorityVoting(Module& M, PointerType *MajorityVotingPoin
         PassAuxiliary->Int8PtrNull,
         PassAuxiliary->Int8PtrNull,
         PassAuxiliary->Int32PtrNull});
-
+  */
   return MajorityVotingFunction;
 }
 
@@ -352,9 +469,7 @@ inline void createOrInsertMajorityVotingFunction(Module& M, Output* OutputObject
   Function* MajorityFunction = M.getFunction(MajorityFunctionName);
 
   if(MajorityFunction == nullptr) MajorityFunction = createMajorityVoting(M, dyn_cast<PointerType>(OutputType), PassAuxiliary, MajorityFunctionName);
-
-
- OutputObject->MajorityVotingFunction = MajorityFunction;
+  OutputObject->MajorityVotingFunction = MajorityFunction;
 }
 
 
@@ -368,7 +483,8 @@ inline std::vector<Function * > getValidKernels(NamedMDNode *Annotations){
     if(Operand->getString() == "kernel"){
       ValueAsMetadata* VM = dyn_cast<ValueAsMetadata>(SingleAnnotation->getOperand(0));
       Function* ValidFunction = dyn_cast<Function>(VM->getValue());
-      ValidKernels.push_back(ValidFunction);
+      if(!ValidFunction->getName().contains(RevisitedSuffix))
+        ValidKernels.push_back(ValidFunction);
     }
   }
 
@@ -470,15 +586,105 @@ inline Function* createDeviceMajorityVotingFunction(Module& M, Auxiliary* PassAu
   Builder.CreateRetVoid();
 
   return MajorityVotingFunction;
-
-
-
-  
-
-
-  
-  
-
 }
 
 
+inline void createHostRevisited(Function* NewKernelFunction, Function* OriginalFunction, Auxiliary* PassAuxiliary){
+
+  ValueToValueMapTy VMap;
+  SmallVector<ReturnInst*, 8> Returns;
+  Function::arg_iterator DestI = NewKernelFunction->arg_begin();
+  for (const Argument & I : OriginalFunction->args())
+    if (VMap.count(&I) == 0) {    
+      DestI->setName(I.getName()); 
+      VMap[&I] = &*DestI++;       
+    }
+    
+  CloneFunctionInto(NewKernelFunction,OriginalFunction,VMap,false,Returns);
+
+  Function::arg_iterator Args = NewKernelFunction->arg_end();
+  Args--;
+  Value *OriginalBased = Args--;
+  Value *SecondRedundantArg = Args--;   
+  Value *FirstRedundantArg = Args--;
+  Type *OutputType = FirstRedundantArg->getType();
+  Type *BasedType = OriginalBased->getType();
+
+  BasicBlock* FirstBB = dyn_cast<BasicBlock>(NewKernelFunction->begin());
+  BasicBlock* LastBB = &(NewKernelFunction->back());
+  BasicBlock* LauchCallBB = LastBB->getPrevNode();
+  BasicBlock* LastSetupBB = LauchCallBB->getPrevNode();
+  Instruction *Inst = dyn_cast<Instruction>(FirstBB->begin());
+  IRBuilder<> Builder(Inst);
+
+  while(dyn_cast_or_null<AllocaInst>(Inst) != nullptr)
+    Inst = Inst->getNextNode();
+
+  Builder.SetInsertPoint(Inst);
+
+  Instruction* FirstRedundantAllocation = Builder.CreateAlloca(OutputType,nullptr, "FirstRedundantArg");
+  Instruction* SecondRedundantAllocation = Builder.CreateAlloca(OutputType,nullptr, "SecondRedundantArg");
+  Instruction* BasedAllocation = Builder.CreateAlloca(BasedType,nullptr, "OriginalBased");
+
+  while(dyn_cast_or_null<StoreInst>(Inst) != nullptr)
+    Inst = Inst->getNextNode();
+
+  Builder.SetInsertPoint(Inst);
+  Builder.CreateStore(FirstRedundantArg,FirstRedundantAllocation);
+  Builder.CreateStore(SecondRedundantArg,SecondRedundantAllocation);
+  Builder.CreateStore(OriginalBased,BasedAllocation);
+
+  Inst = &(LauchCallBB->back());
+  while(dyn_cast_or_null<CallInst>(Inst) == nullptr)
+    Inst = Inst->getPrevNode();
+  CallInst* CudaLaunchCall = dyn_cast<CallInst>(Inst);
+  
+  CudaLaunchCall->setArgOperand(0, Builder.CreateBitCast(NewKernelFunction, PassAuxiliary->Int8PtrType));
+  
+  Inst = &(LastSetupBB->back());
+  while(dyn_cast_or_null<CallInst>(Inst) == nullptr)
+    Inst = Inst->getPrevNode();
+
+  ConstantInt* Offset = dyn_cast<ConstantInt>(Inst->getOperand(2));
+  ConstantInt* ArgumentSize =  dyn_cast<ConstantInt>((OutputType->isPointerTy()) ? PassAuxiliary->Eight64Bit : PassAuxiliary->Four64Bit);
+  int64_t OffsetValue = Offset->getSExtValue() + ArgumentSize->getSExtValue();
+  Builder.SetInsertPoint(CudaLaunchCall);
+
+  Value* CastedArgument = Builder.CreateBitCast(FirstRedundantAllocation, PassAuxiliary->Int8PtrType);
+  Value* SetupCall = Builder.CreateCall(PassAuxiliary->CudaSetupArgument,{CastedArgument, ArgumentSize, ConstantInt::get(PassAuxiliary->Int64Type, OffsetValue)});
+  Instruction* Condition = dyn_cast<Instruction>(Builder.CreateICmpEQ(SetupCall, PassAuxiliary->Zero32Bit));
+  Instruction* NewBBInstruction = SplitBlockAndInsertIfThen(Condition, CudaLaunchCall, false);
+  BranchInst* Branch = dyn_cast<BranchInst>(Condition->getNextNode());
+  Branch->setOperand(1, LastBB);
+
+  Builder.SetInsertPoint(NewBBInstruction);
+  CastedArgument = Builder.CreateBitCast(SecondRedundantAllocation, PassAuxiliary->Int8PtrType);
+  OffsetValue += ArgumentSize->getSExtValue();
+  SetupCall = Builder.CreateCall(PassAuxiliary->CudaSetupArgument,{CastedArgument, ArgumentSize, ConstantInt::get(PassAuxiliary->Int64Type, OffsetValue)});
+  Condition = dyn_cast<Instruction>(Builder.CreateICmpEQ(SetupCall, PassAuxiliary->Zero32Bit));
+  Branch = dyn_cast<BranchInst>(Condition->getNextNode());
+  NewBBInstruction = SplitBlockAndInsertIfThen(Condition, Condition->getNextNode(), false);
+  Branch = dyn_cast<BranchInst>(Condition->getNextNode());
+  Branch->setOperand(1, LastBB);
+
+
+  Builder.SetInsertPoint(NewBBInstruction);
+  CastedArgument = Builder.CreateBitCast(BasedAllocation, PassAuxiliary->Int8PtrType);
+  OffsetValue += ArgumentSize->getSExtValue();
+  ArgumentSize =  dyn_cast<ConstantInt>((BasedType->isPointerTy()) ? PassAuxiliary->Eight64Bit : PassAuxiliary->Four64Bit);
+  SetupCall = Builder.CreateCall(PassAuxiliary->CudaSetupArgument,{CastedArgument, ArgumentSize, ConstantInt::get(PassAuxiliary->Int64Type, OffsetValue)});
+  Condition = dyn_cast<Instruction>(Builder.CreateICmpEQ(SetupCall, PassAuxiliary->Zero32Bit));
+  Branch = dyn_cast<BranchInst>(Condition->getNextNode());
+  NewBBInstruction = SplitBlockAndInsertIfThen(Condition, Condition->getNextNode(), false);
+  Branch = dyn_cast<BranchInst>(Condition->getNextNode());
+  Branch->setOperand(1, LastBB);
+
+
+  registerTheFunction(NewKernelFunction, PassAuxiliary);
+  
+}
+
+
+
+
+#endif

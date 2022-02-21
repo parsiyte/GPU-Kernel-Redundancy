@@ -2478,13 +2478,13 @@ CodeGenFunction::GenerateCapturedStmtFunction(const CapturedStmt &S) {
 void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const Attr *> QualityAttrs) {
   using namespace llvm;
   if (QualityAttrs[0]->getKind() == attr::Quality) {
-    
+
     errs() << "addQualityMetadata\n";
     const Attr *t = QualityAttrs[0];
     const QualityAttr *attr = (const QualityAttr*)t;
     ASTContext& AC = CGM.getContext();
     BasicBlock::iterator it_start = block->getPrevNode()->getFirstInsertionPt();
-    Instruction *inst_start = &*it_start; 
+    Instruction *inst_start = &*it_start;
     Instruction *inst_final = inst_start;
     std::string MetaData = "Inputs ";
     if (attr->getOption() == QualityAttr::In) {
@@ -2492,7 +2492,7 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
         clang::Expr *Inputs = attr->getInputs();
 
         clang::Expr *Output = attr->getOutputs();
-      
+
         QualityAttr::SchemeType Scheme = attr->getScheme();
 
         clang::Expr::EvalResult EvalResult;
@@ -2507,7 +2507,6 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
           Output->EvaluateAsRValue(EvalResult, AC);
           Output->EvaluateAsFixedPoint(EvalResult, AC) ;
           MetaData += EvalResult.Val.getAsString(AC, Output->getType());
-          errs() << MetaData << "\n";
 
         }
 
@@ -2517,17 +2516,21 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
           MetaData += " Scheme &MKES";
         else if(Scheme == QualityAttr::SchemeType::xbske)
           MetaData += " Scheme &XBSKE";
-        else if(Scheme == QualityAttr::SchemeType::ybske)
+        else if(Scheme == QualityAttr::SchemeType::ybske){
           MetaData += " Scheme &YBSKE";
-        else if(Scheme == QualityAttr::SchemeType::xtske)
+        }
+        else if(Scheme == QualityAttr::SchemeType::xtske){
           MetaData += " Scheme &XTSKE";
+          errs() << "Burada\n";
+        }
         else if(Scheme == QualityAttr::SchemeType::ytske)
           MetaData += " Scheme &YTSKE";
         else
           MetaData += "";
-        
+          errs() << MetaData << "+\n";
 
-        
+
+
 
 /*
         MetaData += " SchemeType ";
@@ -2540,7 +2543,7 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
           errs() << MetaData << "\n";
 
         }
-*/        
+*/
         /*
         MetaData += EvalResult.Val.getAsString(AC, Inputs->getType());
         MetaData += EvalResult.Val.getAsString(AC, Input2->getType());
@@ -2556,7 +2559,7 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
                 run = 0;
                 break;
             }
-            inst_start = inst_start->getNextNode(); 
+            inst_start = inst_start->getNextNode();
             if (inst_start != nullptr) inst_final = inst_start;
           } else {
           run = 0;
@@ -2564,11 +2567,10 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
           }
         }
     }
-    
+
     LLVMContext& C = inst_final->getContext();
     MDNode* N = MDNode::get(C, MDString::get(C, MetaData));
     inst_final->setMetadata("Redundancy", N);
 
-  } 
+  }
 }
-

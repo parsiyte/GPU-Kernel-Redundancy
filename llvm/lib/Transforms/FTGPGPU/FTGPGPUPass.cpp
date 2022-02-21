@@ -1,4 +1,5 @@
-
+#ifndef MYHEADEFILE_H2
+#define MYHEADEFILE_H2
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
@@ -37,6 +38,6 @@ class FTGPGPUPass{
 
 };
 
-
+#endif
 
 

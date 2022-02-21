@@ -1116,8 +1116,6 @@ void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToR
     return RevistedFunction;
   }
 
-
-
 FunctionType * getTheNewKernelType(FunctionType* OriginalFunctionType, std::vector<Output> Outputs){
 
   FunctionType* NewKernelFunctionType;

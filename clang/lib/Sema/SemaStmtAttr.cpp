@@ -330,10 +330,12 @@ static Attr *handleOpenCLUnrollHint(Sema &S, Stmt *St, const ParsedAttr &A,
 static Attr *handleQualityAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceRange Range) {
 
   llvm::errs() << "handleQualityAttr " <<  A.getNumArgs() << "\n";
-  
+
   QualityAttr::SchemeType Scheme;
   QualityAttr::OptionType Option = QualityAttr::In;
   llvm::StringRef SchemeName = A.getArgAsIdent(4)->Ident->getName();
+  llvm::errs() << "handleQualityAttr " << SchemeName << "\n";
+
   if( SchemeName == "MKES")
     Scheme = QualityAttr::mkes;
   else if(SchemeName == "XBSKE")
@@ -342,13 +344,16 @@ static Attr *handleQualityAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceRan
     Scheme =QualityAttr::ybske;
   else if(SchemeName == "XTSKE")
     Scheme =QualityAttr::xtske;
-  else if(SchemeName == "YTSKE")
-    Scheme =QualityAttr::xtske;
+  else if(SchemeName == "YTSKE"){
+    Scheme =QualityAttr::ytske;
+  llvm::errs() << "handleQualityAttr Burada" << "\n";
+
+  }
   else
     Scheme =QualityAttr::mke;
 
-  
-  
+
+
   return QualityAttr::CreateImplicit(S.Context,Option,A.getArgAsExpr(2),"Out",A.getArgAsExpr(3),"Scheme", Scheme, A.getRange());
   //return QualityAttr::CreateImplicit(S.Context,Option,A.getArgAsExpr(2),"Out", A.getArgAsExpr(3), "Scheme", A.getArgAsExpr(4), A.getRange());
 }

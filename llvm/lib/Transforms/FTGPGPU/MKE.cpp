@@ -74,46 +74,6 @@ class MKE : public AbstractPass{
         int NumberOfArgs = FunctionCall->getNumArgOperands() - 1; // Remove the output 
 
         std::vector<Value *> ArgsOfReplicationFunction;
-/*
-                          for(int ArgIndex = 0; ArgIndex < NumberOfArgs; ArgIndex++){ // Outputu çıkartıyoruz
-                    Value* Arg = FunctionCall->getArgOperand(ArgIndex);
-                    Value* Ref = Arg;
-                    std::vector<Instruction * > InstructionToClone;
-                    if(Instruction* ArgAsInstruction = dyn_cast<Instruction>(Arg)){
-                      Instruction* CloneLocation = NewBasicBlockFirstInstruction;
-                      while(true){
-                        errs() << *ArgAsInstruction << "\n";
-                        InstructionToClone.push_back(ArgAsInstruction);
-                        ArgAsInstruction = dyn_cast<Instruction>(ArgAsInstruction->getOperand(0));
-                        bool IfAlloca = dyn_cast_or_null<AllocaInst>(ArgAsInstruction) != nullptr;
-                        if(IfAlloca)
-                          break;
-                      }
-                      errs() << "#############\n";
-                      Instruction* PrevCloned = nullptr;
-
-                      for (unsigned Index = InstructionToClone.size(); Index-- > 1; ){
-                        Instruction* Cloned = InstructionToClone.at(Index)->clone();
-                        Cloned->insertBefore(CloneLocation);
-                        if(PrevCloned != nullptr){
-                          Cloned->setOperand(0, PrevCloned);
-                        }
-                         PrevCloned = Cloned;
-                      } 
-                      
-                      errs() << "#############\n";
-                      if(PrevCloned != nullptr){
-                          Builder.SetInsertPoint(PrevCloned->getNextNode());
-                         Ref = Builder.CreateLoad(PrevCloned);
-                         }else{
-                           Instruction* NewLoad = dyn_cast<Instruction>(Ref)->clone();
-                           NewLoad->insertBefore(CloneLocation);
-                           Ref = NewLoad;
-                         }
-
-                    }
-                    ArgsOfReplicationFunction.push_back(Ref);
-                  }*/
 
         
         for(int ArgIndex = 0; ArgIndex < NumberOfArgs; ArgIndex++){
