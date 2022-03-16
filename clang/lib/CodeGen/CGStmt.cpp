@@ -14,16 +14,25 @@
 #include "CodeGenFunction.h"
 #include "CodeGenModule.h"
 #include "TargetInfo.h"
+#include "clang/AST/APValue.h"
 #include "clang/AST/Attr.h"
+#include "clang/AST/Attrs.inc"
 #include "clang/AST/StmtVisitor.h"
+#include "clang/AST/Type.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Basic/TargetInfo.h"
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/MDBuilder.h"
+#include <string>
+#include <llvm/Support/raw_ostream.h>
+#include <iostream>
+#include "clang/Sema/RedundantHint.h"
+#include "llvm/IR/Type.h"
 
 using namespace clang;
 using namespace CodeGen;
@@ -45,6 +54,12 @@ void CodeGenFunction::EmitStopPoint(const Stmt *S) {
 void CodeGenFunction::EmitStmt(const Stmt *S, ArrayRef<const Attr *> Attrs) {
   assert(S && "Null statement?");
   PGO.setCurrentStmt(S);
+
+  if (Attrs.size() > 0) {
+    if (Attrs[0]->getKind() == attr::Redundant)
+      addRedundantMetadata(Builder.GetInsertBlock(), Attrs);
+  }
+
 
   // These statements have their own debug info handling.
   if (EmitSimpleStmt(S))
@@ -2459,4 +2474,99 @@ CodeGenFunction::GenerateCapturedStmtFunction(const CapturedStmt &S) {
   FinishFunction(CD->getBodyRBrace());
 
   return F;
+}
+void CodeGenFunction::addRedundantMetadata(llvm::BasicBlock *block, ArrayRef<const Attr *> QualityAttrs) {
+  using namespace llvm;
+  if (QualityAttrs[0]->getKind() == attr::Redundant) {
+    const Attr *t = QualityAttrs[0];
+    const RedundantAttr *attr = (const RedundantAttr*)t;
+    ASTContext& AC = CGM.getContext();
+    BasicBlock::iterator it_start = block->getPrevNode()->getFirstInsertionPt();
+    Instruction *inst_start = &*it_start;
+    Instruction *inst_final = inst_start;
+    std::string MetaData = "Inputs ";
+    if (attr->getOption() == RedundantAttr::In) {
+        int run = 1;
+        clang::Expr *Inputs = attr->getInputs();
+
+        clang::Expr *Output = attr->getOutputs();
+
+        RedundantAttr::SchemeType Scheme = attr->getScheme();
+
+        clang::Expr::EvalResult EvalResult;
+        if(Inputs != nullptr){
+          Inputs->EvaluateAsRValue(EvalResult, AC);
+          Inputs->EvaluateAsFixedPoint(EvalResult, AC) ;
+          MetaData += EvalResult.Val.getAsString(AC, Inputs->getType());
+          errs() << MetaData << "\n";
+        }
+        MetaData += " Outputs ";
+        if(Output != nullptr){
+          Output->EvaluateAsRValue(EvalResult, AC);
+          Output->EvaluateAsFixedPoint(EvalResult, AC) ;
+          MetaData += EvalResult.Val.getAsString(AC, Output->getType());
+
+        }
+
+        if(Scheme == RedundantAttr::SchemeType::mke)
+          MetaData += " Scheme &MKE";
+        else if(Scheme == RedundantAttr::SchemeType::mkes)
+          MetaData += " Scheme &MKES";
+        else if(Scheme == RedundantAttr::SchemeType::xbske)
+          MetaData += " Scheme &XBSKE";
+        else if(Scheme == RedundantAttr::SchemeType::ybske){
+          MetaData += " Scheme &YBSKE";
+        }
+        else if(Scheme == RedundantAttr::SchemeType::xtske){
+          MetaData += " Scheme &XTSKE";
+        }
+        else if(Scheme == RedundantAttr::SchemeType::ytske)
+          MetaData += " Scheme &YTSKE";
+        else
+          MetaData += "";
+
+
+
+
+/*
+        MetaData += " SchemeType ";
+        if(Scheme != nullptr){
+          errs() << Scheme->getType().getAsString() << "\n";
+          //errs() << Scheme->getType() << "\n";
+          //Scheme->EvaluateAsC(EvalResult, AC);
+          //Scheme->EvaluateAsFixedPoint(EvalResult, AC) ;
+          //MetaData += EvalResult.Val.getAsString(AC, Scheme->getType());
+          errs() << MetaData << "\n";
+
+        }
+*/
+        /*
+        MetaData += EvalResult.Val.getAsString(AC, Inputs->getType());
+        MetaData += EvalResult.Val.getAsString(AC, Input2->getType());
+        MetaData += " Outputs ";
+        Outputs->EvaluateAsRValue(EvalResult, AC);
+        Outputs->EvaluateAsFixedPoint(EvalResult, AC) ;
+        MetaData += EvalResult.Val.getAsString(AC, Outputs->getType());
+        */
+        while (run) {
+          if (inst_start != nullptr) {
+            if (isa<CallInst>(inst_start)) {
+                inst_final = inst_start;
+                run = 0;
+                break;
+            }
+            inst_start = inst_start->getNextNode();
+            if (inst_start != nullptr) inst_final = inst_start;
+          } else {
+          run = 0;
+          break;
+          }
+        }
+    }
+
+    LLVMContext& C = inst_final->getContext();
+    MDNode* N = MDNode::get(C, MDString::get(C, MetaData));
+    inst_final->setMetadata("Redundancy", N);
+
+  }
 }

@@ -10,6 +10,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+
+#include "clang/AST/Expr.h"
+#include "clang/Basic/LLVM.h"
+#include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/SemaInternal.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/Basic/SourceManager.h"
@@ -17,6 +21,9 @@
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/ScopeInfo.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/raw_ostream.h"
+#include <string>
 
 using namespace clang;
 using namespace sema;
@@ -75,6 +82,7 @@ static Attr *handleSuppressAttr(Sema &S, Stmt *St, const ParsedAttr &A,
 
 static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const ParsedAttr &A,
                                 SourceRange) {
+
   IdentifierLoc *PragmaNameLoc = A.getArgAsIdent(0);
   IdentifierLoc *OptionLoc = A.getArgAsIdent(1);
   IdentifierLoc *StateLoc = A.getArgAsIdent(2);
@@ -170,8 +178,7 @@ static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const ParsedAttr &A,
   return LoopHintAttr::CreateImplicit(S.Context, Option, State, ValueExpr, A);
 }
 
-static void
-CheckForIncompatibleAttributes(Sema &S,
+static void CheckForIncompatibleAttributes(Sema &S,
                                const SmallVectorImpl<const Attr *> &Attrs) {
   // There are 6 categories of loop hints attributes: vectorize, interleave,
   // unroll, unroll_and_jam, pipeline and distribute. Except for distribute they
@@ -318,8 +325,38 @@ static Attr *handleOpenCLUnrollHint(Sema &S, Stmt *St, const ParsedAttr &A,
   return OpenCLUnrollHintAttr::CreateImplicit(S.Context, UnrollFactor);
 }
 
+
+static Attr *handleRedundantAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceRange Range) {
+
+
+  RedundantAttr::SchemeType Scheme;
+  RedundantAttr::OptionType Option = RedundantAttr::In;
+  llvm::StringRef SchemeName = A.getArgAsIdent(4)->Ident->getName();
+
+  if( SchemeName == "MKES")
+    Scheme = RedundantAttr::mkes;
+  else if(SchemeName == "XBSKE")
+    Scheme =RedundantAttr::xbske;
+  else if(SchemeName == "YBSKE")
+    Scheme =RedundantAttr::ybske;
+  else if(SchemeName == "XTSKE")
+    Scheme =RedundantAttr::xtske;
+  else if(SchemeName == "YTSKE"){
+    Scheme =RedundantAttr::ytske;
+
+  }
+  else
+    Scheme =RedundantAttr::mke;
+
+
+
+  return RedundantAttr::CreateImplicit(S.Context,Option,A.getArgAsExpr(2),"Out",A.getArgAsExpr(3),"Scheme", Scheme, A.getRange());
+  //return QualityAttr::CreateImplicit(S.Context,Option,A.getArgAsExpr(2),"Out", A.getArgAsExpr(3), "Scheme", A.getArgAsExpr(4), A.getRange());
+}
+
+
 static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
-                                  SourceRange Range) {
+                                  SourceRange Range) {;
   switch (A.getKind()) {
   case ParsedAttr::UnknownAttribute:
     S.Diag(A.getLoc(), A.isDeclspecAttribute()
@@ -329,6 +366,8 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
     return nullptr;
   case ParsedAttr::AT_FallThrough:
     return handleFallThroughAttr(S, St, A, Range);
+  case ParsedAttr::AT_Redundant:
+    return handleRedundantAttr(S, St, A, Range);
   case ParsedAttr::AT_LoopHint:
     return handleLoopHintAttr(S, St, A, Range);
   case ParsedAttr::AT_OpenCLUnrollHint:

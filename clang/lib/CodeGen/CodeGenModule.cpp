@@ -61,6 +61,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MD5.h"
 #include "llvm/Support/TimeProfiler.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
 using namespace CodeGen;
@@ -1496,7 +1497,7 @@ CodeGenModule::getMostBaseClasses(const CXXRecordDecl *RD) {
 void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
                                                            llvm::Function *F) {
   llvm::AttrBuilder B;
-
+  //llvm::errs() << "Burada\n" << F->getName() << "\n";
   if (CodeGenOpts.UnwindTables)
     B.addAttribute(llvm::Attribute::UWTable);
 

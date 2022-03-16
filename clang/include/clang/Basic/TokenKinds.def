@@ -837,6 +837,9 @@ PRAGMA_ANNOTATION(pragma_openmp_end)
 // handles #pragma loop ... directives.
 PRAGMA_ANNOTATION(pragma_loop_hint)
 
+
+PRAGMA_ANNOTATION(pragma_redundant)
+
 PRAGMA_ANNOTATION(pragma_fp)
 
 // Annotation for the attribute pragma directives - #pragma clang attribute ...

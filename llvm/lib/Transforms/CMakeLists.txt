@@ -9,3 +9,13 @@ add_subdirectory(Hello)
 add_subdirectory(ObjCARC)
 add_subdirectory(Coroutines)
 add_subdirectory(CFGuard)
+
+add_subdirectory(Back2Back)
+add_subdirectory(Back2BackWithStreams)
+add_subdirectory(RMT)
+add_subdirectory(RMTv2)
+
+add_subdirectory(RMTY)
+add_subdirectory(RMTv2Y)
+add_subdirectory(FTGPGPU)
+add_subdirectory(skeleton)

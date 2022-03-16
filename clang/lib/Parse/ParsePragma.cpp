@@ -11,15 +11,23 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/Expr.h"
 #include "clang/Basic/PragmaKinds.h"
 #include "clang/Basic/TargetInfo.h"
+#include "clang/Basic/TokenKinds.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Parse/LoopHint.h"
 #include "clang/Parse/ParseDiagnostic.h"
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/Scope.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
+
+#include "clang/Sema/RedundantHint.h"
+#include "llvm/Support/raw_ostream.h"
+#include <stdio.h>
+#include <string>
 using namespace clang;
 
 namespace {
@@ -213,6 +221,14 @@ private:
   Sema &Actions;
 };
 
+
+
+struct PragmaRedundantHandler : public PragmaHandler {
+  PragmaRedundantHandler() : PragmaHandler("redundant") {}
+  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
+                    Token &FirstToken) override;
+};
+
 struct PragmaLoopHintHandler : public PragmaHandler {
   PragmaLoopHintHandler() : PragmaHandler("loop") {}
   void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
@@ -304,6 +320,8 @@ void Parser::initializePragmaHandlers() {
   PCSectionHandler = std::make_unique<PragmaClangSectionHandler>(Actions);
   PP.AddPragmaHandler("clang", PCSectionHandler.get());
 
+
+
   if (getLangOpts().OpenCL) {
     OpenCLExtensionHandler = std::make_unique<PragmaOpenCLExtensionHandler>();
     PP.AddPragmaHandler("OPENCL", OpenCLExtensionHandler.get());
@@ -358,6 +376,9 @@ void Parser::initializePragmaHandlers() {
 
   OptimizeHandler = std::make_unique<PragmaOptimizeHandler>(Actions);
   PP.AddPragmaHandler("clang", OptimizeHandler.get());
+
+  RedundantHandler = std::make_unique<PragmaRedundantHandler>();
+  PP.AddPragmaHandler(RedundantHandler.get());
 
   LoopHintHandler = std::make_unique<PragmaLoopHintHandler>();
   PP.AddPragmaHandler("clang", LoopHintHandler.get());
@@ -466,6 +487,9 @@ void Parser::resetPragmaHandlers() {
 
   PP.RemovePragmaHandler("clang", OptimizeHandler.get());
   OptimizeHandler.reset();
+
+  PP.RemovePragmaHandler(RedundantHandler.get());
+  RedundantHandler.reset();
 
   PP.RemovePragmaHandler("clang", LoopHintHandler.get());
   LoopHintHandler.reset();
@@ -997,6 +1021,18 @@ bool Parser::HandlePragmaMSInitSeg(StringRef PragmaName,
   return true;
 }
 
+
+namespace {
+struct PragmaRedundantInfo {
+  Token PragmaName;
+  Token Option;
+  Token SchemeInfo;
+  ArrayRef<Token> Toks;
+};
+} // end anonymous namespace
+
+
+
 namespace {
 struct PragmaLoopHintInfo {
   Token PragmaName;
@@ -1013,7 +1049,70 @@ static std::string PragmaLoopHintString(Token PragmaName, Token Option) {
       .Case("unroll_and_jam", Str)
       .Case("unroll", Str)
       .Default("");
+
 }
+
+
+
+bool Parser::HandlePragmaRedundant(RedundantHint &Hint) {
+  assert(Tok.is(tok::annot_pragma_redundant));
+  PragmaRedundantInfo *Info = static_cast<PragmaRedundantInfo *>(Tok.getAnnotationValue());
+
+  IdentifierInfo *PragmaNameInfo = Info->PragmaName.getIdentifierInfo();
+  Hint.PragmaNameLoc = IdentifierLoc::create(Actions.Context, Info->PragmaName.getLocation(), PragmaNameInfo);
+
+  IdentifierInfo *OptionInfo = Info->Option.getIdentifierInfo();
+  Hint.OptionLoc = IdentifierLoc::create(Actions.Context, Info->Option.getLocation(), OptionInfo);
+
+  llvm::ArrayRef<Token> Toks = Info->Toks;
+  PP.EnterTokenStream(Toks, false, false);
+  ConsumeAnnotationToken();
+  
+  Hint.SchemeType =  IdentifierLoc::create(Actions.Context, Toks[5].getLocation(), Toks[5].getIdentifierInfo());
+  int Index = 0;
+  
+  ConsumeAnyToken();
+  while(Tok.getIdentifierInfo()->getName() != "out"){
+    llvm::errs() << Tok.getIdentifierInfo()->getName() << "-\n";
+      Hint.Inputs = ParseConstantExpression().get();
+  }
+  ConsumeAnyToken();
+  
+  Index = 0;
+  while (Tok.getIdentifierInfo()->getName() != "Scheme"){
+    llvm::errs() << Tok.getIdentifierInfo()->getName() << "\n";
+    Hint.Outputs = ParseConstantExpression().get();
+  }
+  ConsumeAnyToken();
+  
+  Index = 0;
+  ConsumeAnyToken();
+  /*
+  while (Tok.isNot(tok::eof)){
+    auto Redundance = Tok.getIdentifierInfo()->getName();
+    llvm::errs() << Redundance << "++\n";
+    Hint.RedundanceScheme = Redundance;
+    //Hint.RedundanceScheme = ParseConstantExpression().get();
+    Index++;
+    ConsumeAnyToken();
+  }
+ */
+  
+    // Tokens following an error in an ill-formed constant expression will
+    // remain in the token stream and must be removed.
+  if (Tok.isNot(tok::eof)) {
+    printf("Not EOF\n");
+    llvm::errs() << Tok.getIdentifierInfo()->getName();
+    while (Tok.isNot(tok::eof))
+      ConsumeAnyToken();
+  }
+  ConsumeToken(); // Consume the constant expression eof terminator.
+    Hint.Range = SourceRange(Info->PragmaName.getLocation(),
+                           Info->Toks.back().getLocation());
+  return true;
+}
+
+
 
 bool Parser::HandlePragmaLoopHint(LoopHint &Hint) {
   assert(Tok.is(tok::annot_pragma_loop_hint));
@@ -2648,6 +2747,10 @@ void PragmaOptimizeHandler::HandlePragma(Preprocessor &PP,
   Actions.ActOnPragmaOptimize(IsOn, FirstToken.getLocation());
 }
 
+
+
+
+
 namespace {
 /// Used as the annotation value for tok::annot_pragma_fp.
 struct TokFPAnnotValue {
@@ -2769,6 +2872,77 @@ void Parser::HandlePragmaFP() {
   Actions.ActOnPragmaFPContract(FPC);
   ConsumeAnnotationToken();
 }
+
+static bool ParseRedundantValue(Preprocessor &PP, Token &Tok, Token PragmaName,
+                    Token Option, PragmaRedundantInfo &Info) {
+  SmallVector<Token, 1> ValueList;
+
+  while (Tok.isNot(tok::eod)) {
+    ValueList.push_back(Tok);
+    PP.Lex(Tok);
+  }
+  Token EOFTok;
+  EOFTok.startToken();
+  EOFTok.setKind(tok::eof);
+  EOFTok.setLocation(Tok.getLocation());
+  ValueList.push_back(EOFTok); // Terminates expression for parsing.
+
+  Info.Toks = llvm::makeArrayRef(ValueList).copy(PP.getPreprocessorAllocator());
+  Info.Option = Option;
+  Info.PragmaName = PragmaName;
+  return true;
+
+}
+
+
+
+void PragmaRedundantHandler::HandlePragma(Preprocessor &PP,
+                                         PragmaIntroducer Introducer,
+                                         Token &Tok) {
+  Token PragmaName = Tok;
+  
+  SmallVector<Token, 1> TokenList;
+  PP.Lex(Tok);
+  if (Tok.isNot(tok::identifier)) {
+    printf("Error, not a identifier token for the option ofpragma quality\n");
+    return;
+  }
+  
+
+  Token Option = Tok;
+  IdentifierInfo *OptionInfo = Tok.getIdentifierInfo();
+  bool OptionValid = llvm::StringSwitch<bool>(OptionInfo->getName())
+                           .Case("in", true)
+                           .Default(false);
+  if (!OptionValid) {
+    printf("Error, option not recognized for pragma quality\n");
+    return;
+  }
+
+  auto *Info = new (PP.getPreprocessorAllocator()) PragmaRedundantInfo;
+  if (!ParseRedundantValue(PP, Tok, PragmaName, Option, *Info))
+    return;
+
+  Token RedundantTok;
+  RedundantTok.startToken();
+  RedundantTok.setKind(tok::annot_pragma_redundant);
+  RedundantTok.setLocation(PragmaName.getLocation());
+  RedundantTok.setAnnotationEndLoc(PragmaName.getLocation());
+  RedundantTok.setAnnotationValue(static_cast<void *>(Info));
+  TokenList.push_back(RedundantTok);
+
+  if (Tok.isNot(tok::eod)) {
+    printf("Error, extra tokens at the end of pragma redundant\n");
+    PP.Diag(Tok.getLocation(), diag::warn_pragma_extra_tokens_at_eol)
+        << "redundant pragma";
+    return;
+  }
+  auto TokenArray = std::make_unique<Token[]>(TokenList.size());
+  std::copy(TokenList.begin(), TokenList.end(), TokenArray.get());
+  PP.EnterTokenStream(std::move(TokenArray), TokenList.size(),
+                      /*DisableMacroExpansion=*/false, false);
+
+} 
 
 /// Parses loop or unroll pragma hint value and fills in Info.
 static bool ParseLoopHintValue(Preprocessor &PP, Token &Tok, Token PragmaName,

@@ -2107,6 +2107,8 @@ public:
   /// code.
   void EmitBranch(llvm::BasicBlock *Block);
 
+  void addRedundantMetadata(llvm::BasicBlock *block, ArrayRef<const Attr *> QualityAttrs);
+
   /// HaveInsertPoint - True if an insertion point is defined. If not, this
   /// indicates that the current code being emitted is unreachable.
   bool HaveInsertPoint() const {

@@ -3164,6 +3164,35 @@ def LoopHint : Attr {
   let Documentation = [LoopHintDocs, UnrollHintDocs];
 }
 
+def Redundant : Attr {
+  let Spellings = [Pragma<"", "redundant">];
+  let Args = [EnumArgument<"Option", "OptionType",
+                          ["main", "in"],
+                          ["Main", "In"]>,
+              ExprArgument<"Inputs">, StringArgument<"Out">, ExprArgument<"Outputs">,  StringArgument<"SchemeStr">, 
+
+             EnumArgument<"Scheme", "SchemeType",
+                          ["MKE", "MKES", "XBSKE", "YBKSE", "XTSKE", "YTSKE"],
+                          ["mke", "mkes", "xbske", "ybske", "xtske", "ytske"]>
+              
+              
+              ];
+  let AdditionalMembers = [{
+  static const char *getOptionName(int Option) {
+    switch(Option) {
+    case Main: return "main";
+    case In: return "in";
+    }
+    llvm_unreachable("Unhandled Quality option.");
+  }
+    void printPrettyPragma(raw_ostream &OS, const PrintingPolicy &Policy) const {
+      return;
+    }
+  }];
+  let Documentation = [RedundantDocs];
+}
+
+
 def CapturedRecord : InheritableAttr {
   // This attribute has no spellings as it is only ever created implicitly.
   let Spellings = [];

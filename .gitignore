@@ -21,6 +21,7 @@
 #OS X specific files.
 .DS_store
 
+
 # Nested build directory
 /build*
 
@@ -54,3 +55,5 @@ autoconf/autom4te.cache
 .vs
 # clangd index
 .clangd
+/.cache
+    

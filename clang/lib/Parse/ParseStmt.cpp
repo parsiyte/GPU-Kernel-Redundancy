@@ -11,15 +11,26 @@
 //
 //===----------------------------------------------------------------------===//
 
+//#include "clang/AST/Attrs.inc"
+#include "clang/Sema/Ownership.h"
+#include "clang/AST/Expr.h"
 #include "clang/AST/PrettyDeclStackTrace.h"
 #include "clang/Basic/Attributes.h"
+#include "clang/Basic/LLVM.h"
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Parse/LoopHint.h"
 #include "clang/Parse/Parser.h"
 #include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/DeclSpec.h"
+#include "clang/Sema/Ownership.h"
+#include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/TypoCorrection.h"
+#include "clang/Sema/RedundantHint.h"
+#include <stdio.h>
+#include "llvm/IR/Attributes.h"
+#include "llvm/Support/raw_ostream.h"
+
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -91,8 +102,7 @@ StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc,
 /// [OBC]   '@' 'throw' expression ';'
 /// [OBC]   '@' 'throw' ';'
 ///
-StmtResult
-Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
+StmtResult Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
                                     ParsedStmtContext StmtCtx,
                                     SourceLocation *TrailingElseLoc) {
 
@@ -161,6 +171,7 @@ StmtResult Parser::ParseStatementOrDeclarationAfterAttributes(
 Retry:
   tok::TokenKind Kind  = Tok.getKind();
   SourceLocation AtLoc;
+  
   switch (Kind) {
   case tok::at: // May be a @try or @throw statement
     {
@@ -395,6 +406,11 @@ Retry:
     ProhibitAttributes(Attrs);
     HandlePragmaMSVtorDisp();
     return StmtEmpty();
+
+    case tok::annot_pragma_redundant:
+    ProhibitAttributes(Attrs);
+    return ParsePragmaRedudant(Stmts, StmtCtx, TrailingElseLoc, Attrs);
+
 
   case tok::annot_pragma_loop_hint:
     ProhibitAttributes(Attrs);
@@ -2154,6 +2170,44 @@ StmtResult Parser::ParseReturnStatement() {
     return Actions.ActOnCoreturnStmt(getCurScope(), ReturnLoc, R.get());
   return Actions.ActOnReturnStmt(ReturnLoc, R.get(), getCurScope());
 }
+
+
+StmtResult Parser::ParsePragmaRedudant(StmtVector &Stmts,
+                                       ParsedStmtContext Allowed,
+                                       SourceLocation *TrailingElseLoc,
+                                       ParsedAttributesWithRange &Attrs) {
+ParsedAttributesWithRange TempAttrs(AttrFactory);
+  while (Tok.is(tok::annot_pragma_redundant)) {
+    RedundantHint Hint;
+    if (!HandlePragmaRedundant(Hint))
+      continue;
+    if (Hint.OptionLoc->Ident->getName() == "in") {
+      ArgsUnion ArgHints[] = {Hint.PragmaNameLoc, Hint.OptionLoc,
+                            Hint.Inputs,
+                            Hint.Outputs, Hint.SchemeType};
+      TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
+                     Hint.PragmaNameLoc->Loc, ArgHints, 15,
+                     AsmLabelAttr::AS_Pragma);
+    } else if (Hint.OptionLoc->Ident->getName() == "main") {
+      // Hint.ValueExprF is NOT needed in this case
+      ArgsUnion ArgHints[] = {Hint.PragmaNameLoc, Hint.OptionLoc};
+      TempAttrs.addNew(Hint.PragmaNameLoc->Ident, Hint.Range, nullptr,
+                     Hint.PragmaNameLoc->Loc, ArgHints, 3,
+                     AsmLabelAttr::AS_Pragma);
+    } else {
+      printf("Error, no valid option in ParseStmt\n");
+    }
+  }
+  // Get the next statement.
+  MaybeParseCXX11Attributes(Attrs);
+  StmtResult S = ParseStatementOrDeclarationAfterAttributes(
+      Stmts, Allowed, TrailingElseLoc, Attrs);
+  Attrs.takeAllFrom(TempAttrs);
+  return S;
+
+}
+
+
 
 StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts,
                                        ParsedStmtContext StmtCtx,
