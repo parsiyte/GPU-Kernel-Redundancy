@@ -3164,7 +3164,7 @@ def LoopHint : Attr {
   let Documentation = [LoopHintDocs, UnrollHintDocs];
 }
 
-def Quality : Attr {
+def Redundant : Attr {
   let Spellings = [Pragma<"", "redundant">];
   let Args = [EnumArgument<"Option", "OptionType",
                           ["main", "in"],
@@ -3189,7 +3189,7 @@ def Quality : Attr {
       return;
     }
   }];
-  let Documentation = [QualityDocs];
+  let Documentation = [RedundantDocs];
 }
 
 

@@ -2886,12 +2886,10 @@ for details.
   }];
 }
 
-def QualityDocs : Documentation {
+def RedundantDocs : Documentation {
   let Category = DocCatStmt;
   let Heading = "#pragma redundant";
-  let Content = [{
-The ``#pragma redundant`` directive allows add metadata in the IR to specific functions or to the general program.
-  }];
+  
 }
 
 

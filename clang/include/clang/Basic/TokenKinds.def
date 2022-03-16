@@ -838,7 +838,7 @@ PRAGMA_ANNOTATION(pragma_openmp_end)
 PRAGMA_ANNOTATION(pragma_loop_hint)
 
 
-PRAGMA_ANNOTATION(pragma_quality)
+PRAGMA_ANNOTATION(pragma_redundant)
 
 PRAGMA_ANNOTATION(pragma_fp)
 

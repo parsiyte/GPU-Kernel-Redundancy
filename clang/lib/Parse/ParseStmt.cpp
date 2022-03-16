@@ -26,7 +26,7 @@
 #include "clang/Sema/ParsedAttr.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/TypoCorrection.h"
-#include "clang/Sema/QualityHint.h"
+#include "clang/Sema/RedundantHint.h"
 #include <stdio.h>
 #include "llvm/IR/Attributes.h"
 #include "llvm/Support/raw_ostream.h"
@@ -407,9 +407,9 @@ Retry:
     HandlePragmaMSVtorDisp();
     return StmtEmpty();
 
-    case tok::annot_pragma_quality:
+    case tok::annot_pragma_redundant:
     ProhibitAttributes(Attrs);
-    return ParsePragmaQuality(Stmts, StmtCtx, TrailingElseLoc, Attrs);
+    return ParsePragmaRedudant(Stmts, StmtCtx, TrailingElseLoc, Attrs);
 
 
   case tok::annot_pragma_loop_hint:
@@ -2172,15 +2172,14 @@ StmtResult Parser::ParseReturnStatement() {
 }
 
 
-StmtResult Parser::ParsePragmaQuality(StmtVector &Stmts,
+StmtResult Parser::ParsePragmaRedudant(StmtVector &Stmts,
                                        ParsedStmtContext Allowed,
                                        SourceLocation *TrailingElseLoc,
                                        ParsedAttributesWithRange &Attrs) {
 ParsedAttributesWithRange TempAttrs(AttrFactory);
-  while (Tok.is(tok::annot_pragma_quality)) {
-    llvm::errs() << "ParsePragmaQuality\n";
-    QualityHint Hint;
-    if (!HandlePragmaQuality(Hint))
+  while (Tok.is(tok::annot_pragma_redundant)) {
+    RedundantHint Hint;
+    if (!HandlePragmaRedundant(Hint))
       continue;
     if (Hint.OptionLoc->Ident->getName() == "in") {
       ArgsUnion ArgHints[] = {Hint.PragmaNameLoc, Hint.OptionLoc,

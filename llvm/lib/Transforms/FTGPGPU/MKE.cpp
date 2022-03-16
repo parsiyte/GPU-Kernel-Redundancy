@@ -113,7 +113,7 @@ class MKE : public AbstractPass{
         Value* NewOutput = OutputObject->Replications[ReplicationIndex - 1];
         ArgsOfReplicationFunction.push_back(Builder.CreateLoad(NewOutput));
 
-        Builder.CreateCall(FunctionToReplicate, ArgsOfReplicationFunction);
+        errs() << *Builder.CreateCall(FunctionToReplicate, ArgsOfReplicationFunction) << "\n";
         
       }
 
@@ -124,7 +124,6 @@ class MKE : public AbstractPass{
       FirstInstructionOfNextBB = SplitBlockAndInsertIfThen(ConfigureCheck, ConfigureCheck->getNextNode(), false);
       Builder.SetInsertPoint(FirstInstructionOfNextBB);
 
-      
       Value* OrijinalOutput = OutputObject->OutputAllocation;
       Value* FirstReplicationOutput = OutputObject->Replications[0];
       Value* SecondReplicationOutput = OutputObject->Replications[1];
@@ -134,9 +133,14 @@ class MKE : public AbstractPass{
       Value* LoadedFirstReplicationOutput = Builder.CreateLoad(FirstReplicationOutput);
       Value* LoadedSecondReplicationOutput = Builder.CreateLoad(SecondReplicationOutput);
 
-      
+      errs() << *OutputObject->MajorityVotingFunction->getFunctionType() << "\n";
+      errs() << *LoadedOrijinalOutput->getType() << "\n";
+      errs() << *LoadedFirstReplicationOutput->getType() << "\n";
+      errs() << *LoadedSecondReplicationOutput->getType() << "\n";
+      errs() << *SizeOfOutput->getType() << "\n";
+
       Builder.CreateCall(OutputObject->MajorityVotingFunction, {LoadedOrijinalOutput, LoadedFirstReplicationOutput, LoadedSecondReplicationOutput, SizeOfOutput});
-      
+
 
 
       

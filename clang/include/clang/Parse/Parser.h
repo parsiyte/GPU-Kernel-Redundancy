@@ -27,7 +27,7 @@
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/SaveAndRestore.h"
-#include "clang/Sema/QualityHint.h"
+#include "clang/Sema/RedundantHint.h"
 
 #include <memory>
 #include <stack>
@@ -193,7 +193,7 @@ class Parser : public CodeCompletionHandler {
   std::unique_ptr<PragmaHandler> MSOptimize;
   std::unique_ptr<PragmaHandler> CUDAForceHostDeviceHandler;
   std::unique_ptr<PragmaHandler> OptimizeHandler;
-  std::unique_ptr<PragmaHandler> QualityHandler;
+  std::unique_ptr<PragmaHandler> RedundantHandler;
 
   std::unique_ptr<PragmaHandler> LoopHintHandler;
   std::unique_ptr<PragmaHandler> UnrollHintHandler;
@@ -735,7 +735,7 @@ private:
   /// #pragma clang __debug captured
   StmtResult HandlePragmaCaptured();
 
-  bool HandlePragmaQuality(QualityHint &Hint);
+  bool HandlePragmaRedundant(RedundantHint &Hint);
 
   /// Handle the annotation token produced for
   /// #pragma clang loop and #pragma unroll.
@@ -2042,7 +2042,7 @@ private:
                                  SourceLocation *TrailingElseLoc,
                                  ParsedAttributesWithRange &Attrs);
 
- StmtResult ParsePragmaQuality(StmtVector &Stmts,
+ StmtResult ParsePragmaRedudant(StmtVector &Stmts,
                                   ParsedStmtContext StmtCtx,
                                   SourceLocation *TrailingElseLoc,
                                   ParsedAttributesWithRange &Attrs);

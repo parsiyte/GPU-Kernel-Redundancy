@@ -31,7 +31,7 @@
 #include <string>
 #include <llvm/Support/raw_ostream.h>
 #include <iostream>
-#include "clang/Sema/QualityHint.h"
+#include "clang/Sema/RedundantHint.h"
 #include "llvm/IR/Type.h"
 
 using namespace clang;
@@ -56,8 +56,8 @@ void CodeGenFunction::EmitStmt(const Stmt *S, ArrayRef<const Attr *> Attrs) {
   PGO.setCurrentStmt(S);
 
   if (Attrs.size() > 0) {
-    if (Attrs[0]->getKind() == attr::Quality)
-      addQualityMetadata(Builder.GetInsertBlock(), Attrs);
+    if (Attrs[0]->getKind() == attr::Redundant)
+      addRedundantMetadata(Builder.GetInsertBlock(), Attrs);
   }
 
 
@@ -2475,25 +2475,23 @@ CodeGenFunction::GenerateCapturedStmtFunction(const CapturedStmt &S) {
 
   return F;
 }
-void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const Attr *> QualityAttrs) {
+void CodeGenFunction::addRedundantMetadata(llvm::BasicBlock *block, ArrayRef<const Attr *> QualityAttrs) {
   using namespace llvm;
-  if (QualityAttrs[0]->getKind() == attr::Quality) {
-
-    errs() << "addQualityMetadata\n";
+  if (QualityAttrs[0]->getKind() == attr::Redundant) {
     const Attr *t = QualityAttrs[0];
-    const QualityAttr *attr = (const QualityAttr*)t;
+    const RedundantAttr *attr = (const RedundantAttr*)t;
     ASTContext& AC = CGM.getContext();
     BasicBlock::iterator it_start = block->getPrevNode()->getFirstInsertionPt();
     Instruction *inst_start = &*it_start;
     Instruction *inst_final = inst_start;
     std::string MetaData = "Inputs ";
-    if (attr->getOption() == QualityAttr::In) {
+    if (attr->getOption() == RedundantAttr::In) {
         int run = 1;
         clang::Expr *Inputs = attr->getInputs();
 
         clang::Expr *Output = attr->getOutputs();
 
-        QualityAttr::SchemeType Scheme = attr->getScheme();
+        RedundantAttr::SchemeType Scheme = attr->getScheme();
 
         clang::Expr::EvalResult EvalResult;
         if(Inputs != nullptr){
@@ -2510,24 +2508,22 @@ void CodeGenFunction::addQualityMetadata(llvm::BasicBlock *block, ArrayRef<const
 
         }
 
-        if(Scheme == QualityAttr::SchemeType::mke)
+        if(Scheme == RedundantAttr::SchemeType::mke)
           MetaData += " Scheme &MKE";
-        else if(Scheme == QualityAttr::SchemeType::mkes)
+        else if(Scheme == RedundantAttr::SchemeType::mkes)
           MetaData += " Scheme &MKES";
-        else if(Scheme == QualityAttr::SchemeType::xbske)
+        else if(Scheme == RedundantAttr::SchemeType::xbske)
           MetaData += " Scheme &XBSKE";
-        else if(Scheme == QualityAttr::SchemeType::ybske){
+        else if(Scheme == RedundantAttr::SchemeType::ybske){
           MetaData += " Scheme &YBSKE";
         }
-        else if(Scheme == QualityAttr::SchemeType::xtske){
+        else if(Scheme == RedundantAttr::SchemeType::xtske){
           MetaData += " Scheme &XTSKE";
-          errs() << "Burada\n";
         }
-        else if(Scheme == QualityAttr::SchemeType::ytske)
+        else if(Scheme == RedundantAttr::SchemeType::ytske)
           MetaData += " Scheme &YTSKE";
         else
           MetaData += "";
-          errs() << MetaData << "+\n";
 
 
 

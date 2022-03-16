@@ -24,7 +24,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 
-#include "clang/Sema/QualityHint.h"
+#include "clang/Sema/RedundantHint.h"
 #include "llvm/Support/raw_ostream.h"
 #include <stdio.h>
 #include <string>
@@ -223,8 +223,8 @@ private:
 
 
 
-struct PragmaQualityHandler : public PragmaHandler {
-  PragmaQualityHandler() : PragmaHandler("redundant") {}
+struct PragmaRedundantHandler : public PragmaHandler {
+  PragmaRedundantHandler() : PragmaHandler("redundant") {}
   void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
                     Token &FirstToken) override;
 };
@@ -377,8 +377,8 @@ void Parser::initializePragmaHandlers() {
   OptimizeHandler = std::make_unique<PragmaOptimizeHandler>(Actions);
   PP.AddPragmaHandler("clang", OptimizeHandler.get());
 
-  QualityHandler = std::make_unique<PragmaQualityHandler>();
-  PP.AddPragmaHandler(QualityHandler.get());
+  RedundantHandler = std::make_unique<PragmaRedundantHandler>();
+  PP.AddPragmaHandler(RedundantHandler.get());
 
   LoopHintHandler = std::make_unique<PragmaLoopHintHandler>();
   PP.AddPragmaHandler("clang", LoopHintHandler.get());
@@ -488,8 +488,8 @@ void Parser::resetPragmaHandlers() {
   PP.RemovePragmaHandler("clang", OptimizeHandler.get());
   OptimizeHandler.reset();
 
-  PP.RemovePragmaHandler(QualityHandler.get());
-  QualityHandler.reset();
+  PP.RemovePragmaHandler(RedundantHandler.get());
+  RedundantHandler.reset();
 
   PP.RemovePragmaHandler("clang", LoopHintHandler.get());
   LoopHintHandler.reset();
@@ -1023,7 +1023,7 @@ bool Parser::HandlePragmaMSInitSeg(StringRef PragmaName,
 
 
 namespace {
-struct PragmaQualityInfo {
+struct PragmaRedundantInfo {
   Token PragmaName;
   Token Option;
   Token SchemeInfo;
@@ -1054,10 +1054,9 @@ static std::string PragmaLoopHintString(Token PragmaName, Token Option) {
 
 
 
-bool Parser::HandlePragmaQuality(QualityHint &Hint) {
-  llvm::errs() << "HandlePragmaQuality\n";
-  assert(Tok.is(tok::annot_pragma_quality));
-  PragmaQualityInfo *Info = static_cast<PragmaQualityInfo *>(Tok.getAnnotationValue());
+bool Parser::HandlePragmaRedundant(RedundantHint &Hint) {
+  assert(Tok.is(tok::annot_pragma_redundant));
+  PragmaRedundantInfo *Info = static_cast<PragmaRedundantInfo *>(Tok.getAnnotationValue());
 
   IdentifierInfo *PragmaNameInfo = Info->PragmaName.getIdentifierInfo();
   Hint.PragmaNameLoc = IdentifierLoc::create(Actions.Context, Info->PragmaName.getLocation(), PragmaNameInfo);
@@ -1065,11 +1064,8 @@ bool Parser::HandlePragmaQuality(QualityHint &Hint) {
   IdentifierInfo *OptionInfo = Info->Option.getIdentifierInfo();
   Hint.OptionLoc = IdentifierLoc::create(Actions.Context, Info->Option.getLocation(), OptionInfo);
 
-  //bool OptionMain = OptionInfo->isStr("main");
-  //bool OptionFunct = OptionInfo->isStr("in");
-
   llvm::ArrayRef<Token> Toks = Info->Toks;
-  PP.EnterTokenStream(Toks, /*DisableMacroExpansion=*/false, false);
+  PP.EnterTokenStream(Toks, false, false);
   ConsumeAnnotationToken();
   
   Hint.SchemeType =  IdentifierLoc::create(Actions.Context, Toks[5].getLocation(), Toks[5].getIdentifierInfo());
@@ -2877,8 +2873,8 @@ void Parser::HandlePragmaFP() {
   ConsumeAnnotationToken();
 }
 
-static bool ParseQualityValue(Preprocessor &PP, Token &Tok, Token PragmaName,
-                    Token Option, PragmaQualityInfo &Info) {
+static bool ParseRedundantValue(Preprocessor &PP, Token &Tok, Token PragmaName,
+                    Token Option, PragmaRedundantInfo &Info) {
   SmallVector<Token, 1> ValueList;
 
   while (Tok.isNot(tok::eod)) {
@@ -2894,14 +2890,13 @@ static bool ParseQualityValue(Preprocessor &PP, Token &Tok, Token PragmaName,
   Info.Toks = llvm::makeArrayRef(ValueList).copy(PP.getPreprocessorAllocator());
   Info.Option = Option;
   Info.PragmaName = PragmaName;
-  llvm::errs() << "ParseQualityValue\n";
   return true;
 
 }
 
 
 
-void PragmaQualityHandler::HandlePragma(Preprocessor &PP,
+void PragmaRedundantHandler::HandlePragma(Preprocessor &PP,
                                          PragmaIntroducer Introducer,
                                          Token &Tok) {
   Token PragmaName = Tok;
@@ -2924,22 +2919,22 @@ void PragmaQualityHandler::HandlePragma(Preprocessor &PP,
     return;
   }
 
-  auto *Info = new (PP.getPreprocessorAllocator()) PragmaQualityInfo;
-  if (!ParseQualityValue(PP, Tok, PragmaName, Option, *Info))
+  auto *Info = new (PP.getPreprocessorAllocator()) PragmaRedundantInfo;
+  if (!ParseRedundantValue(PP, Tok, PragmaName, Option, *Info))
     return;
 
-  Token QualityTok;
-  QualityTok.startToken();
-  QualityTok.setKind(tok::annot_pragma_quality);
-  QualityTok.setLocation(PragmaName.getLocation());
-  QualityTok.setAnnotationEndLoc(PragmaName.getLocation());
-  QualityTok.setAnnotationValue(static_cast<void *>(Info));
-  TokenList.push_back(QualityTok);
+  Token RedundantTok;
+  RedundantTok.startToken();
+  RedundantTok.setKind(tok::annot_pragma_redundant);
+  RedundantTok.setLocation(PragmaName.getLocation());
+  RedundantTok.setAnnotationEndLoc(PragmaName.getLocation());
+  RedundantTok.setAnnotationValue(static_cast<void *>(Info));
+  TokenList.push_back(RedundantTok);
 
   if (Tok.isNot(tok::eod)) {
-    printf("Error, extra tokens at the end of pragma quality\n");
+    printf("Error, extra tokens at the end of pragma redundant\n");
     PP.Diag(Tok.getLocation(), diag::warn_pragma_extra_tokens_at_eol)
-        << "quality pragma";
+        << "redundant pragma";
     return;
   }
   auto TokenArray = std::make_unique<Token[]>(TokenList.size());

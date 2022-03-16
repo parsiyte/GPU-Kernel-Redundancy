@@ -83,7 +83,6 @@ static Attr *handleSuppressAttr(Sema &S, Stmt *St, const ParsedAttr &A,
 static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const ParsedAttr &A,
                                 SourceRange) {
 
-  llvm::errs() << "handleLoopHintAttr\n";
   IdentifierLoc *PragmaNameLoc = A.getArgAsIdent(0);
   IdentifierLoc *OptionLoc = A.getArgAsIdent(1);
   IdentifierLoc *StateLoc = A.getArgAsIdent(2);
@@ -327,34 +326,31 @@ static Attr *handleOpenCLUnrollHint(Sema &S, Stmt *St, const ParsedAttr &A,
 }
 
 
-static Attr *handleQualityAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceRange Range) {
+static Attr *handleRedundantAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceRange Range) {
 
-  llvm::errs() << "handleQualityAttr " <<  A.getNumArgs() << "\n";
 
-  QualityAttr::SchemeType Scheme;
-  QualityAttr::OptionType Option = QualityAttr::In;
+  RedundantAttr::SchemeType Scheme;
+  RedundantAttr::OptionType Option = RedundantAttr::In;
   llvm::StringRef SchemeName = A.getArgAsIdent(4)->Ident->getName();
-  llvm::errs() << "handleQualityAttr " << SchemeName << "\n";
 
   if( SchemeName == "MKES")
-    Scheme = QualityAttr::mkes;
+    Scheme = RedundantAttr::mkes;
   else if(SchemeName == "XBSKE")
-    Scheme =QualityAttr::xbske;
+    Scheme =RedundantAttr::xbske;
   else if(SchemeName == "YBSKE")
-    Scheme =QualityAttr::ybske;
+    Scheme =RedundantAttr::ybske;
   else if(SchemeName == "XTSKE")
-    Scheme =QualityAttr::xtske;
+    Scheme =RedundantAttr::xtske;
   else if(SchemeName == "YTSKE"){
-    Scheme =QualityAttr::ytske;
-  llvm::errs() << "handleQualityAttr Burada" << "\n";
+    Scheme =RedundantAttr::ytske;
 
   }
   else
-    Scheme =QualityAttr::mke;
+    Scheme =RedundantAttr::mke;
 
 
 
-  return QualityAttr::CreateImplicit(S.Context,Option,A.getArgAsExpr(2),"Out",A.getArgAsExpr(3),"Scheme", Scheme, A.getRange());
+  return RedundantAttr::CreateImplicit(S.Context,Option,A.getArgAsExpr(2),"Out",A.getArgAsExpr(3),"Scheme", Scheme, A.getRange());
   //return QualityAttr::CreateImplicit(S.Context,Option,A.getArgAsExpr(2),"Out", A.getArgAsExpr(3), "Scheme", A.getArgAsExpr(4), A.getRange());
 }
 
@@ -370,8 +366,8 @@ static Attr *ProcessStmtAttribute(Sema &S, Stmt *St, const ParsedAttr &A,
     return nullptr;
   case ParsedAttr::AT_FallThrough:
     return handleFallThroughAttr(S, St, A, Range);
-  case ParsedAttr::AT_Quality:
-    return handleQualityAttr(S, St, A, Range);
+  case ParsedAttr::AT_Redundant:
+    return handleRedundantAttr(S, St, A, Range);
   case ParsedAttr::AT_LoopHint:
     return handleLoopHintAttr(S, St, A, Range);
   case ParsedAttr::AT_OpenCLUnrollHint:

@@ -41,6 +41,7 @@ class SKE : public AbstractPass{
     BasicBlock* CurrentBB = FunctionCall->getParent();
     BasicBlock* NextBB = CurrentBB->getNextNode();
     BasicBlock* PrevBB = CurrentBB->getPrevNode();
+    LLVMContext& Context = CurrentBB->getContext();
 
     
 
@@ -75,16 +76,15 @@ class SKE : public AbstractPass{
       Value* LoadedNewArg = Builder.CreateLoad(Replication);
       NewArgs.push_back(LoadedNewArg);
     }
-    errs() << this->TypeIndex << "\n";
-    errs() << *PassAuxiliary->CudaConfiguration[this->TypeIndex] << "\n";
+    errs() << *PassAuxiliary->CudaConfiguration[this->TypeIndex] << "BURASI\n";
     NewArgs.push_back(PassAuxiliary->CudaConfiguration[this->TypeIndex]);
 
     FunctionType* NewKernelFunctionType = getTheNewKernelFunctionType(NewArgs, FunctionToReplicate->getReturnType());
 
-    std::string NewKernelFunctionName = FunctionName + RevisitedSuffix;
+    std::string NewKernelFunctionName = FunctionName + RevisitedSuffix + this->Based + this->Dimension;
     
     FunctionCallee NewKernelAsCallee =  Module->getOrInsertFunction(NewKernelFunctionName, NewKernelFunctionType);
-    Instruction* NewFunctionCall = Builder.CreateCall(NewKernelAsCallee, NewArgs);
+    CallInst* NewFunctionCall = Builder.CreateCall(NewKernelAsCallee, NewArgs);
     Function* NewKernelFunction = cast<Function>(NewKernelAsCallee.getCallee());
 
 
@@ -115,26 +115,13 @@ class SKE : public AbstractPass{
     Value* ConfigurationToMultiplicate = PassAuxiliary->CudaConfiguration[this->TypeIndex];
     CallInst* DimensionCall = dyn_cast<CallInst>(PassAuxiliary->CudaConfiguration[this->TypeIndex+4]);
     Builder.SetInsertPoint(DimensionCall);
-    errs() << this->Based;
-    errs() << this->Dimension;
-    errs() << this->TypeIndex;
-    DimensionCall->setArgOperand(this->TypeIndex%2+1, Builder.CreateMul(ConfigurationToMultiplicate, PassAuxiliary->Three32Bit));
-
-
-    
-
-
-
-
-
-    
-      
-
-
-
-
-
-
+    if(!DimensionCall->hasMetadata("Multiplication")){
+      DimensionCall->setArgOperand(this->TypeIndex%2+1, Builder.CreateMul(ConfigurationToMultiplicate, PassAuxiliary->Three32Bit));
+      MDNode* N = MDNode::get(Context, MDString::get(Context, "true"));
+      dyn_cast<Instruction>(DimensionCall)->setMetadata("Multiplication", N);
+    }else{
+      NewFunctionCall->setArgOperand(NewArgs.size() - 1, Builder.CreateUDiv(ConfigurationToMultiplicate, PassAuxiliary->Three32Bit));
+    }
 
     return false;
     };

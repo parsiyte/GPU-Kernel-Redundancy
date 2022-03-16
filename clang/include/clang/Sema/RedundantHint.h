@@ -1,5 +1,5 @@
-#ifndef LLVM_CLANG_SEMA_QUALITYHINT_H
-#define LLVM_CLANG_SEMA_QUALITYHINT_H
+#ifndef LLVM_CLANG_SEMA_RedundantHint_H
+#define LLVM_CLANG_SEMA_RedundantHint_H
 
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/LLVM.h"
@@ -12,7 +12,7 @@
 
 
 namespace clang {
-struct QualityHint {
+struct RedundantHint {
   SourceRange Range;
   IdentifierLoc *PragmaNameLoc;
   IdentifierLoc *OptionLoc;
@@ -20,11 +20,11 @@ struct QualityHint {
   Expr *Outputs;
   IdentifierLoc *SchemeType;
 
-  QualityHint()
+  RedundantHint()
       : PragmaNameLoc(nullptr), OptionLoc(nullptr), 
       Inputs(nullptr),
       Outputs(nullptr) {}
 };
 
 }
-#endif // LLVM_CLANG_SEMA_QUALITYHINT_H
+#endif // LLVM_CLANG_SEMA_RedundantHint_H

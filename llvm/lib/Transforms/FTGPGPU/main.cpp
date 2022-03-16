@@ -33,11 +33,16 @@ struct Device : public ModulePass {
     PassAuxiliary->One32Bit = ConstantInt::get(PassAuxiliary->Int32Type, 1);
     PassAuxiliary->Two32Bit = ConstantInt::get(PassAuxiliary->Int32Type, 2);
 
-
-    PassAuxiliary->BlockDimX = M.getFunction("llvm.nvvm.read.ptx.sreg.ntid.x");
-    PassAuxiliary->BlockIDX = M.getFunction("llvm.nvvm.read.ptx.sreg.ctaid.x");
-    PassAuxiliary->ThreadIDX = M.getFunction("llvm.nvvm.read.ptx.sreg.tid.x");
-
+   
+    PassAuxiliary->CudaDimensionFunctions[0] = M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.ctaid.x", PassAuxiliary->Int32Type); //blockId.x
+    PassAuxiliary->CudaDimensionFunctions[1] = M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.ctaid.y", PassAuxiliary->Int32Type); //blockId.y
+    PassAuxiliary->CudaDimensionFunctions[2] = M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.tid.x", PassAuxiliary->Int32Type); //threadId.x
+    PassAuxiliary->CudaDimensionFunctions[3] = M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.tid.y", PassAuxiliary->Int32Type); //threadId.y
+    PassAuxiliary->CudaDimensionFunctions[4] = M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.ntid.x", PassAuxiliary->Int32Type); //blockDim.x
+    PassAuxiliary->CudaDimensionFunctions[5] = M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.ntid.y", PassAuxiliary->Int32Type); //blockDim.y
+    
+    char Dimensions[2] = {'x', 'y'};
+    char Baseds[2] = {'b', 't'};
 
     NamedMDNode *Annotations = M.getNamedMetadata("nvvm.annotations");
     std::vector<Function *> ValidKernels = getValidKernels(Annotations);
@@ -67,123 +72,35 @@ struct Device : public ModulePass {
       RevisitedType.push_back(PassAuxiliary->Int32Type);
 
       FunctionType* RevisitedKernelType = FunctionType::get(PassAuxiliary->VoidType, RevisitedType, false);
-
-      std::string NewKernelFunctionName = FunctionName + RevisitedSuffix;
-      
-      FunctionCallee NewKernelAsCallee =  M.getOrInsertFunction(NewKernelFunctionName, RevisitedKernelType);
-      Function* NewKernelFunction = dyn_cast<Function>(NewKernelAsCallee.getCallee());
-
-
-
-      ValueToValueMapTy VMap;
-      SmallVector<ReturnInst*, 8> Returns;
-      Function::arg_iterator DestI = NewKernelFunction->arg_begin();
-      for (const Argument & I : Kernel->args())
-        if (VMap.count(&I) == 0) {    
-          DestI->setName(I.getName()); 
-          VMap[&I] = &*DestI++;       
-        }
-      
-      CloneFunctionInto(NewKernelFunction,Kernel,VMap,false,Returns);
-
-      Function::arg_iterator Args = NewKernelFunction->arg_end();
-      Args--;
-      Value *OriginalBased = Args--;
-      Value *SecondRedundantArg = Args--;   
-      Value *FirstRedundantArg = Args--;
-      Value *OriginalOutput = Args--;
-
-      Value* Output = NewKernelFunction->getArg(Kernel->arg_size() - 1);
-      User* FirstUser =  Output->uses().begin()->getUser();
-      StoreInst* OutputStore = dyn_cast<StoreInst>(FirstUser);
-      AllocaInst* OutputAllocation = dyn_cast<AllocaInst>(OutputStore->getPointerOperand());
-
-      BasicBlock* FirstBB = dyn_cast<BasicBlock>(NewKernelFunction->begin());
-      
-      Instruction& LastInstruction = FirstBB->front();
-
-      std::string ValueName = OriginalOutput->getName().str();
-      FirstRedundantArg->setName(ValueName + "1");
-      SecondRedundantArg->setName(ValueName + "2");
-      OriginalBased->setName("OriginalBased");
-
-      IRBuilder<> Builder(OutputAllocation->getNextNode());
-
-      Instruction* FirstRedundant =  Builder.CreateAlloca(OutputType,nullptr, "FirstRedundant");  
-      Instruction* SecondRedundant =  Builder.CreateAlloca(OutputType,nullptr, "SecondRedundant");
-      Value* OriginalBaseddr = Builder.CreateAlloca(PassAuxiliary->Int32Type,nullptr, "OriginalBased.addr");
-      Instruction* MetaOutput = Builder.CreateAlloca(OutputType,nullptr, "MetaOutput");  
-
-      Builder.CreateStore(OriginalBased, OriginalBaseddr);
-      Builder.CreateStore(FirstRedundantArg, FirstRedundant);
-      Builder.CreateStore(SecondRedundantArg, SecondRedundant);
-
-      OutputAllocation->replaceAllUsesWith(MetaOutput);
-        
-
-        Builder.CreateStore(Output,OutputAllocation );
-        
-
-        Instruction* BlockIdaddr =  Builder.CreateAlloca(PassAuxiliary->Int32Type,nullptr, "BlockIdaddr");
-        Instruction* BlockIdaddr2 =  Builder.CreateAlloca(PassAuxiliary->Int32Type,nullptr, "BlockIdaddr2");
-        Instruction* BlockIdaddrY =  Builder.CreateAlloca(PassAuxiliary->Int32Type,nullptr, "BlockIdaddrY");
-        
-
-        
-  
-        Value* BlockIDYCall;
-         Value* BlockYID2 ;
-        Value* BlockIDXCall = Builder.CreateCall(PassAuxiliary->BlockIDX);
-
-    
-        Value* BlockID = Builder.CreateUDiv(
-            BlockIDXCall,
-            Builder.CreateLoad(OriginalBaseddr)
-         );
-
-        BlockID->setName("BlockID");
-        Builder.CreateStore(BlockID, BlockIdaddr);
-
-        Value* BlockID2 = Builder.CreateURem(
-            BlockIDXCall,
-            Builder.CreateLoad(OriginalBaseddr)
-         );
-         BlockID2->setName("BlockID2");
-        Builder.CreateStore(BlockID2, BlockIdaddr2);
+      for(int BasedIndex = 0; BasedIndex < 2; BasedIndex++){
+        for(int DimensionIndex = 0; DimensionIndex < 2; DimensionIndex++){
+          char Dimension = Dimensions[DimensionIndex];
+          char Based = Baseds[BasedIndex];
+          int TypeIndex = 2 * BasedIndex + DimensionIndex;
+          std::string NewKernelFunctionName = FunctionName + RevisitedSuffix + Based + Dimension;
+          
+          FunctionCallee NewKernelAsCallee =  M.getOrInsertFunction(NewKernelFunctionName, RevisitedKernelType);
+          Function* NewKernelFunction = dyn_cast<Function>(NewKernelAsCallee.getCallee());
 
 
-         changeXID(NewKernelFunction,BlockIDXCall,BlockIdaddr2, Builder);
+          ValueToValueMapTy VMap;
+          SmallVector<ReturnInst*, 8> Returns;
+          Function::arg_iterator DestI = NewKernelFunction->arg_begin();
+          for (const Argument & I : Kernel->args())
+            if (VMap.count(&I) == 0) {    
+              DestI->setName(I.getName()); 
+              VMap[&I] = &*DestI++;       
+            }
+          
+          CloneFunctionInto(NewKernelFunction,Kernel,VMap,false,Returns);
+          
+          errs() << FunctionName << "\n";
+          alterTheFunction(NewKernelFunction, PassAuxiliary, TypeIndex);
 
 
-         
-        Builder.SetInsertPoint(OutputStore->getNextNode());
-        BlockID = Builder.CreateLoad(BlockIdaddr);
-        Instruction* ZeroCmp = dyn_cast<Instruction>(Builder.CreateICmpEQ(BlockID, PassAuxiliary->Zero32Bit));
-        Instruction *ThenTerm, *FirstElseIfCondTerm;
-        SplitBlockAndInsertIfThenElse(ZeroCmp, ZeroCmp->getNextNode(), &ThenTerm, &FirstElseIfCondTerm); 
-        Builder.SetInsertPoint(ThenTerm);
-        Builder.CreateStore(Builder.CreateLoad(OutputAllocation), MetaOutput);
-
-
-        Instruction *ElseIfTerm, *SecondElseTerm;
-        Builder.SetInsertPoint(FirstElseIfCondTerm);
-        BlockID = Builder.CreateLoad(BlockIdaddr);
-        Instruction* OneCmp = dyn_cast<Instruction>(Builder.CreateICmpEQ(BlockID, PassAuxiliary->One32Bit));
-        SplitBlockAndInsertIfThenElse(OneCmp, OneCmp->getNextNode(), &ElseIfTerm, &SecondElseTerm); 
-        Builder.SetInsertPoint(ElseIfTerm);
-        Builder.CreateStore(Builder.CreateLoad(FirstRedundant), MetaOutput);
-
-
-        Builder.SetInsertPoint(SecondElseTerm);
-        BlockID = Builder.CreateLoad(BlockIdaddr);
-        Instruction* TwoCmp = dyn_cast<Instruction>(Builder.CreateICmpEQ(BlockID, PassAuxiliary->Two32Bit));
-        Instruction* NewBranch  = SplitBlockAndInsertIfThen(TwoCmp, TwoCmp->getNextNode(), false);
-        Builder.SetInsertPoint(NewBranch);
-        Builder.CreateStore(Builder.CreateLoad(SecondRedundant), MetaOutput);
-
-       Annotations->addOperand(MDNode::concatenate(MDNode::get(Context, ValueAsMetadata::get(NewKernelFunction)), Con));
-
-
+          Annotations->addOperand(MDNode::concatenate(MDNode::get(Context, ValueAsMetadata::get(NewKernelFunction)), Con));
+       }
+      }
 
 
 
@@ -254,7 +171,7 @@ struct Host : public ModulePass {
                  PassAuxiliary->CudaMallocFunction =  getTheMemoryFunction(CudaMallocFunctions, OutputName, OutputObject);
                  PassAuxiliary->CudaMemCpyFunction =  getTheMemoryFunction(CudaMemCpyFunctions, OutputName);
 
-                 createOrInsertMajorityVotingFunction(M,OutputObject, PassAuxiliary);
+                 createOrInsertMajorityVotingFunction(M, OutputObject, PassAuxiliary);
 
                  CudaConfigure(PassAuxiliary->CudaConfigureCall, PassAuxiliary->CudaConfiguration);
 
@@ -265,12 +182,14 @@ struct Host : public ModulePass {
 
                  errs() << Dimension << "\n";
                  errs() << Based << "\n";
+                 errs() << Scheme << "\n";
 
                  
                  
             
 
                  FTGPGPUPass* MyPass = new FTGPGPUPass(FunctionCall, PassAuxiliary);
+
                 
                  if(Scheme == "MKE"){
                    MyPass->setPass(new MKE());

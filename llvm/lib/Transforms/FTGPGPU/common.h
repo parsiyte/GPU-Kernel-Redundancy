@@ -96,11 +96,12 @@ struct Auxiliary{
   Function*  CudaSetupArgument;
   Function*  CudaLaunch;
 
-
+/*
   Function*  ThreadIDX;
   Function*  BlockIDX;
   Function*  BlockDimX;
-
+*/
+  FunctionCallee CudaDimensionFunctions[6];
 
   CallInst* CudaMallocFunction;
   CallInst* CudaMemCpyFunction;
@@ -134,20 +135,146 @@ struct Auxiliary{
 
 };
 
+
 inline void changeXID(Function *Kernel, Value* NewCreatedCall, Value *ToBeChange, IRBuilder<> Builder) {
-    for (Function::iterator BB = Kernel->begin(); BB != Kernel->end(); ++BB) {
-      for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
-        if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
-          if(FunctionCall == NewCreatedCall)
-            continue;
-          StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
-          if (FunctionName == "llvm.nvvm.read.ptx.sreg.ctaid.x") {
-            FunctionCall->replaceAllUsesWith(Builder.CreateLoad(ToBeChange));
-          } 
-        }
+  for (Function::iterator BB = Kernel->begin(); BB != Kernel->end(); ++BB) {
+    for (BasicBlock::iterator CurrentInstruction = BB->begin(); CurrentInstruction != BB->end(); ++CurrentInstruction) {
+      if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)) {
+        if(FunctionCall == NewCreatedCall)
+          continue;
+        StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
+        if (FunctionName == "llvm.nvvm.read.ptx.sreg.ctaid.x") {
+          FunctionCall->replaceAllUsesWith(Builder.CreateLoad(ToBeChange));
+        } 
       }
     }
   }
+}
+
+inline Instruction* createNewID(IRBuilder<> Builder, Value* OriginalBasedaddr, Auxiliary* PassAuxiliary, int SchemeID) {
+  int Based = SchemeID / 2;
+  int Dimension = SchemeID % 2;
+  Value* BlockId = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[Dimension]);
+  Value* NormalizedBlockID = Based == 0 ? Builder.CreateURem(BlockId, Builder.CreateLoad(OriginalBasedaddr)) : BlockId;
+  Value* BlockDim = Based == 0 ? Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[4 + Dimension]) : dyn_cast<Value>(Builder.CreateLoad(OriginalBasedaddr));
+  Value* BlockIdLocation = Builder.CreateMul(BlockDim, NormalizedBlockID);
+  Value* ThreadID = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[Dimension + 2]);
+  Value* NormalizedThreadID = Based == 0 ? ThreadID: Builder.CreateURem(ThreadID, Builder.CreateLoad(OriginalBasedaddr));
+  Value* newThreadId = Builder.CreateAdd(BlockIdLocation, NormalizedThreadID);
+  return dyn_cast<Instruction>(newThreadId);
+}
+
+inline void changeTheID(Function* NewKernelFunction, Instruction* NewThreadID, StringRef FunctionName){
+  Instruction* TempInstruction = NewThreadID;
+  Instruction* PrevInst = TempInstruction;
+  do{
+    CallInst* TmpAsCall = dyn_cast_or_null<CallInst>(TempInstruction);
+    if((TmpAsCall != nullptr && TmpAsCall->getCalledFunction()->getName() == FunctionName))
+      break;
+    PrevInst = TempInstruction;
+    TempInstruction = TempInstruction->getNextNode();
+    if(TempInstruction == nullptr){ 
+      if(PrevInst->getParent()->getNextNode()){
+        break;
+      }
+      TempInstruction = PrevInst->getParent()->getNextNode()->getFirstNonPHI();
+    }
+  } while (true);
+
+  if(TempInstruction != nullptr){
+    TempInstruction = TempInstruction->getNextNode();
+    TempInstruction->replaceAllUsesWith(NewThreadID);
+  }
+}
+
+
+
+inline void alterTheFunction(Function *NewKernelFunction, Auxiliary* PassAuxiliary, int SchemeID){
+  Function::arg_iterator Args = NewKernelFunction->arg_end();
+  Args--;
+  Value *OriginalBased = Args--;
+  Value *SecondRedundantArg = Args--;   
+  Value *FirstRedundantArg = Args--;
+  Value *OriginalOutput = Args--;
+
+  Value* Output = NewKernelFunction->getArg(NewKernelFunction->arg_size() - 4);
+  Type* OutputType = Output->getType();
+
+  User* FirstUser =  Output->uses().begin()->getUser();
+  StoreInst* OutputStore = dyn_cast<StoreInst>(FirstUser);
+  AllocaInst* OutputAllocation = dyn_cast<AllocaInst>(OutputStore->getPointerOperand());
+
+  BasicBlock* FirstBB = dyn_cast<BasicBlock>(NewKernelFunction->begin());
+  
+  Instruction& LastInstruction = FirstBB->front();
+
+  std::string ValueName = OriginalOutput->getName().str();
+  FirstRedundantArg->setName(ValueName + "1");
+  SecondRedundantArg->setName(ValueName + "2");
+  OriginalBased->setName("OriginalBased");
+
+  IRBuilder<> Builder(OutputAllocation->getNextNode());
+
+  Instruction* FirstRedundant =  Builder.CreateAlloca(OutputType,nullptr, "ex1.addr");
+  //FirstRedundant->setAlignment(MaybeAlign(8));  
+  dyn_cast<GlobalVariable>(FirstRedundant);//->setAlignment(MaybeAlign(8));
+  Instruction* SecondRedundant =  Builder.CreateAlloca(OutputType,nullptr, "ex2.addr");
+  Value* OriginalBaseddr = Builder.CreateAlloca(PassAuxiliary->Int32Type,nullptr, "OriginalBased.addr");
+  Instruction* MetaOutput = Builder.CreateAlloca(OutputType,nullptr, "MetaOutput");  
+
+  Builder.CreateStore(OriginalBased, OriginalBaseddr);
+  Builder.CreateStore(FirstRedundantArg, FirstRedundant);
+  Builder.CreateStore(SecondRedundantArg, SecondRedundant);
+
+  OutputAllocation->replaceAllUsesWith(MetaOutput);
+    
+
+  Builder.CreateStore(Output, OutputAllocation);
+    
+
+  Instruction* RedundantIDAddr =  Builder.CreateAlloca(PassAuxiliary->Int32Type, nullptr, "RedundantIDAddr");
+  Value* RedundantIDCall = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[SchemeID]);
+
+
+  Value* RedundantID = Builder.CreateUDiv(RedundantIDCall, Builder.CreateLoad(OriginalBaseddr));
+  RedundantID->setName("RedundantID");
+  Builder.CreateStore(RedundantID, RedundantIDAddr);
+
+
+  Instruction* NewThreadID = createNewID(Builder,OriginalBaseddr, PassAuxiliary, SchemeID);
+  changeTheID(NewKernelFunction, NewThreadID, PassAuxiliary->CudaDimensionFunctions[SchemeID%2+2].getCallee()->getName());
+
+
+    
+  Builder.SetInsertPoint(OutputStore->getNextNode());
+  RedundantID = Builder.CreateLoad(RedundantIDAddr);
+  Instruction* ZeroCmp = dyn_cast<Instruction>(Builder.CreateICmpEQ(RedundantID, PassAuxiliary->Zero32Bit));
+  Instruction *ThenTerm, *FirstElseIfCondTerm;
+  SplitBlockAndInsertIfThenElse(ZeroCmp, ZeroCmp->getNextNode(), &ThenTerm, &FirstElseIfCondTerm); 
+  Builder.SetInsertPoint(ThenTerm);
+  Builder.CreateStore(Builder.CreateLoad(OutputAllocation), MetaOutput);
+
+
+  Instruction *ElseIfTerm, *SecondElseTerm;
+  Builder.SetInsertPoint(FirstElseIfCondTerm);
+  RedundantID = Builder.CreateLoad(RedundantIDAddr);
+  Instruction* OneCmp = dyn_cast<Instruction>(Builder.CreateICmpEQ(RedundantID, PassAuxiliary->One32Bit));
+  SplitBlockAndInsertIfThenElse(OneCmp, OneCmp->getNextNode(), &ElseIfTerm, &SecondElseTerm); 
+  Builder.SetInsertPoint(ElseIfTerm);
+  Builder.CreateStore(Builder.CreateLoad(FirstRedundant), MetaOutput);
+
+
+  Builder.SetInsertPoint(SecondElseTerm);
+  RedundantID = Builder.CreateLoad(RedundantIDAddr);
+  Instruction* TwoCmp = dyn_cast<Instruction>(Builder.CreateICmpEQ(RedundantID, PassAuxiliary->Two32Bit));
+  Instruction* NewBranch  = SplitBlockAndInsertIfThen(TwoCmp, TwoCmp->getNextNode(), false);
+  Builder.SetInsertPoint(NewBranch);
+  Builder.CreateStore(Builder.CreateLoad(SecondRedundant), MetaOutput);
+
+
+
+
+}  
 
 inline void registerTheFunction(Function* FunctionToRegister, Auxiliary* PassAuxiliary){
 
@@ -173,7 +300,7 @@ inline void registerTheFunction(Function* FunctionToRegister, Auxiliary* PassAux
 }
 
        
-inline void CudaConfigure(CallInst *FunctionCall, Value* CudaConfigurations[4]) {
+inline void CudaConfigure(CallInst *FunctionCall, Value* CudaConfigurations[8]) {
   for(int ArgIndex = 0; ArgIndex < 4; ArgIndex++){
     LoadInst* LoadInstruction = dyn_cast_or_null<LoadInst>(FunctionCall->getArgOperand(ArgIndex));
     GetElementPtrInst* GEP = dyn_cast_or_null<GetElementPtrInst>(LoadInstruction->getPointerOperand());
@@ -189,6 +316,7 @@ inline void CudaConfigure(CallInst *FunctionCall, Value* CudaConfigurations[4]) 
         BitCastInst* CopySrc = dyn_cast_or_null<BitCastInst>(DimensionMemoryCopy->getArgOperand(1));
         AllocaInst* Alloca  = dyn_cast_or_null<AllocaInst>(CopySrc->getOperand(0));
         TempInstruction = Alloca;
+        Instruction* PrevInst = Alloca->getPrevNode();
         while(true){  
           if(MemCpyInst* MemoryInstruction = dyn_cast_or_null<MemCpyInst>(TempInstruction)){
             BitCastInst* PossibleBitCast = dyn_cast_or_null<BitCastInst>(MemoryInstruction->getArgOperand(0));
@@ -200,20 +328,24 @@ inline void CudaConfigure(CallInst *FunctionCall, Value* CudaConfigurations[4]) 
               while(true){
                 if(CallInst* DimensionCall = dyn_cast_or_null<CallInst>(TempInstruction)){
                   StringRef FunctionName = DimensionCall->getCalledFunction()->getName();
-                  if(FunctionName.contains("dim3") && DimensionCall->hasMetadata("Multiplication") == false && 
+                  if(FunctionName.contains("dim3") && 
                       DimensionCall->getArgOperand(0) == DestinationAllocation){
-                        errs() <<  ArgIndex%2 + 1 << "\n";
                         CudaConfigurations[ArgIndex] = DimensionCall->getArgOperand(ArgIndex%2 + 1);
                         CudaConfigurations[ArgIndex+4] = DimensionCall;
                     break;
                   }
                 }
+                PrevInst = TempInstruction;
                 TempInstruction = TempInstruction->getNextNode();
+                if(TempInstruction == nullptr) TempInstruction = PrevInst->getParent()->getNextNode()->getFirstNonPHI();
+
               }
               break;
             }
           }
+          PrevInst = TempInstruction;
           TempInstruction = TempInstruction->getNextNode();
+          if(TempInstruction == nullptr) TempInstruction = PrevInst->getParent()->getNextNode()->getFirstNonPHI();
         }
       }
     }
@@ -224,7 +356,6 @@ inline FunctionType* getTheNewKernelFunctionType(std::vector<Value *> Args, Type
 
   std::vector<Type * > NewKernelTypes;
   for(size_t ArgIndex = 0; ArgIndex < Args.size(); ArgIndex++){
-    errs() << *Args.at(ArgIndex) << "\n";
     NewKernelTypes.push_back(Args.at(ArgIndex)->getType());
   }
 
@@ -318,7 +449,6 @@ inline CallInst* getTheMemoryFunction(std::vector<CallInst *> Functions, StringR
     if(OutputName.contains(Alloca->getName())){
       ReturnFuntion = CurrentFuntion;
       if(SingleOutput != nullptr){
-        errs() << *Alloca << "\n";
         SingleOutput->DestinationType = Bitcasted->getDestTy();
         SingleOutput->OutputAllocation = Alloca;
         SingleOutput->OutputType = Alloca->getAllocatedType();
@@ -365,8 +495,9 @@ inline void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* Ou
 
 inline Function *createMajorityVoting(Module& M, PointerType *MajorityVotingPointerType, Auxiliary* PassAuxiliary, std::string MajorityVotingFunctionName) {
 
-    errs() << MajorityVotingFunctionName << "\n";
   // std::to_string(MajorityVotingPointerType->getTypeID());
+
+  
 
   Function *CudaGlobalRegister = PassAuxiliary->CudaGlobalRegisterFunction;
   Function *CudaRegister = PassAuxiliary->CudaRegisterFunction;
@@ -423,7 +554,7 @@ inline Function *createMajorityVoting(Module& M, PointerType *MajorityVotingPoin
     Value *BitcastParameter = Builder.CreateBitCast(Parameter, Int8PtrType);
     Value *OffsetValue = ConstantInt::get(Int64Type, Offset);
 
-    if(dyn_cast_or_null<PointerType>(Parameter->getType()) != nullptr) SizeParameter = 4;
+    if(dyn_cast_or_null<PointerType>(Parameter->getType()) == nullptr) SizeParameter = 4;
     else SizeParameter = 8;
 
     Value *SizeValue = ConstantInt::get(Int64Type, SizeParameter);
@@ -439,33 +570,16 @@ inline Function *createMajorityVoting(Module& M, PointerType *MajorityVotingPoin
     Offset += SizeParameter;
   }
 
-  Builder.CreateCall(CudaLaunch, {Builder.CreateBitCast(  MajorityVotingFunction, Int8PtrType)});
+  Builder.CreateCall(CudaLaunch, {Builder.CreateBitCast( MajorityVotingFunction , Int8PtrType)});
   registerTheFunction(MajorityVotingFunction, PassAuxiliary);
 
-
-  /*
-  BasicBlock *CudaRegisterBlock = dyn_cast<BasicBlock>(CudaGlobalRegister->begin());
-  Instruction *FirstInstruction = dyn_cast<Instruction>(CudaRegisterBlock->begin());
-  Builder.SetInsertPoint(FirstInstruction);
-
-  Value *FunctionName =  Builder.CreateGlobalStringPtr(MajorityVotingFunctionName);
-  Builder.CreateCall( CudaRegister,
-      {FirstInstruction->getOperand(0),
-        Builder.CreateBitCast(MajorityVotingFunction, Int8PtrType),
-        FunctionName, FunctionName, 
-        PassAuxiliary->MinusOne32Bit,
-        PassAuxiliary->Int8PtrNull,
-        PassAuxiliary->Int8PtrNull,
-        PassAuxiliary->Int8PtrNull,
-        PassAuxiliary->Int8PtrNull,
-        PassAuxiliary->Int32PtrNull});
-  */
   return MajorityVotingFunction;
 }
 
 inline void createOrInsertMajorityVotingFunction(Module& M, Output* OutputObject, Auxiliary* PassAuxiliary){
   Type* OutputType = OutputObject->OutputType;
-  std::string MajorityFunctionName = "majorityVoting" + std::to_string(OutputType->getPointerElementType()->getTypeID());
+  std::string MajorityFunctionName = "majorityVoting" + std::to_string(OutputType->getPointerElementType()->getTypeID()); // 
+  //MajorityFunctionName = "_Z14majorityVotingPfS_S_l" ; 
   Function* MajorityFunction = M.getFunction(MajorityFunctionName);
 
   if(MajorityFunction == nullptr) MajorityFunction = createMajorityVoting(M, dyn_cast<PointerType>(OutputType), PassAuxiliary, MajorityFunctionName);
@@ -508,50 +622,51 @@ inline Function* createDeviceMajorityVotingFunction(Module& M, Auxiliary* PassAu
   IRBuilder<> Builder(EntryBlock);    
   Function::arg_iterator Args = MajorityVotingFunction->arg_begin();
   Value *DeviceA = Args++;
+  DeviceA->setName("data1");
   Value *DeviceB = Args++;
+  DeviceB->setName("data2");
   Value *DeviceC = Args++;
+  DeviceC->setName("data3");
   Value *ArraySize = Args;
+  ArraySize->setName("size");
 
-  AllocaInst *DeviceAAllocation = Builder.CreateAlloca(OutputPointerType);
-  AllocaInst *DeviceBAllocation = Builder.CreateAlloca(OutputPointerType);
-  AllocaInst *DeviceCAllocation = Builder.CreateAlloca(OutputPointerType);
-  AllocaInst *DeviceArraySizeAllocation = Builder.CreateAlloca(PassAuxiliary->Int64Type);
-
-
-  Value *ThreadIDptr = Builder.CreateAlloca(PassAuxiliary->Int32Type);
+  AllocaInst *DeviceAAllocation = Builder.CreateAlloca(OutputPointerType, nullptr, "data1.addr");
+  AllocaInst *DeviceBAllocation = Builder.CreateAlloca(OutputPointerType, nullptr, "data2.addr");
+  AllocaInst *DeviceCAllocation = Builder.CreateAlloca(OutputPointerType, nullptr, "data3.addr");
+  AllocaInst *DeviceArraySizeAllocation = Builder.CreateAlloca(PassAuxiliary->Int64Type, nullptr, "size.addr");
+  Value *ThreadIDptr = Builder.CreateAlloca(PassAuxiliary->Int32Type, nullptr, "i");
 
   Builder.CreateStore(DeviceA, DeviceAAllocation);
   Builder.CreateStore(DeviceB, DeviceBAllocation);
   Builder.CreateStore(DeviceC, DeviceCAllocation);
   Builder.CreateStore(ArraySize, DeviceArraySizeAllocation);
 
-  Value *BlockID = Builder.CreateCall(PassAuxiliary->BlockIDX);
-  Value *BlockDimension = Builder.CreateCall(PassAuxiliary->BlockDimX);
-  Value *BlockXGrid = Builder.CreateMul(BlockDimension, BlockID);
-  Value *ThreadNumber = Builder.CreateCall(PassAuxiliary->ThreadIDX);
-  Value *ThreadID = Builder.CreateAdd(BlockXGrid, ThreadNumber);
+  Value *BlockID = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[0]);
+  Value *BlockDimension = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[4]);
+  Value *BlockXGrid = Builder.CreateMul(BlockDimension, BlockID,"mul");
+  Value *ThreadNumber = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[2]);
+  Value *ThreadID = Builder.CreateAdd(BlockXGrid, ThreadNumber, "add");
 
   Builder.CreateStore(ThreadID, ThreadIDptr);
   Value *TID = Builder.CreateLoad(ThreadIDptr);
-  Value *Extented = Builder.CreateZExt(TID, PassAuxiliary->Int64Type);
-
+  Value *Extented = Builder.CreateSExt(TID, PassAuxiliary->Int64Type);
   Value *ArraySizeValue = Builder.CreateLoad(DeviceArraySizeAllocation);
 
-  Value *SizeTIDCMP = Builder.CreateICmpULT(Extented, ArraySizeValue);
+  Value *SizeTIDCMP = Builder.CreateICmpSLT(Extented, ArraySizeValue);
   Builder.CreateCondBr(SizeTIDCMP, IfBlock, TailBlock);
 
   Builder.SetInsertPoint(IfBlock);
   Value *DeviceBPointer = Builder.CreateLoad(DeviceBAllocation);
 
   TID = Builder.CreateLoad(ThreadIDptr);
-  Value *TID64Bit = Builder.CreateZExt(TID, PassAuxiliary->Int64Type);
+  Value *TID64Bit = Builder.CreateSExt(TID, PassAuxiliary->Int64Type);
   Value *PointerToTIDthElementOfDeviceB = Builder.CreateInBoundsGEP(DeviceBPointer, TID64Bit);
 
   Value *TIDthElementOfDeviceB = Builder.CreateLoad(PointerToTIDthElementOfDeviceB);
 
   Value *DeviceCPointer = Builder.CreateLoad(DeviceCAllocation);
   TID = Builder.CreateLoad(ThreadIDptr);
-  TID64Bit = Builder.CreateZExt(TID, PassAuxiliary->Int64Type);
+  TID64Bit = Builder.CreateSExt(TID, PassAuxiliary->Int64Type);
   Value *PointerToTIDthElementOfDeviceC = Builder.CreateInBoundsGEP(DeviceCPointer, TID64Bit);
   Value *TIDthElementOfDeviceC = Builder.CreateLoad(PointerToTIDthElementOfDeviceC);
   Value *DeviceADeviceBCMP;
@@ -567,7 +682,7 @@ inline Function* createDeviceMajorityVotingFunction(Module& M, Auxiliary* PassAu
 
   DeviceCPointer = Builder.CreateLoad(DeviceCAllocation);
   TID = Builder.CreateLoad(ThreadIDptr);
-  TID64Bit = Builder.CreateZExt(TID, PassAuxiliary->Int64Type);
+  TID64Bit = Builder.CreateSExt(TID, PassAuxiliary->Int64Type);
   PointerToTIDthElementOfDeviceC = Builder.CreateInBoundsGEP(DeviceCPointer, TID64Bit);
   TIDthElementOfDeviceC = Builder.CreateLoad(PointerToTIDthElementOfDeviceC);
 
@@ -576,7 +691,7 @@ inline Function* createDeviceMajorityVotingFunction(Module& M, Auxiliary* PassAu
   Value *DeviceAPointer = Builder.CreateLoad(DeviceAAllocation);
 
   TID = Builder.CreateLoad(ThreadIDptr);
-  TID64Bit = Builder.CreateZExt(TID, PassAuxiliary->Int64Type);
+  TID64Bit = Builder.CreateSExt(TID, PassAuxiliary->Int64Type);
   Value *PointerToTIDthElementOfDeviceA = Builder.CreateInBoundsGEP(DeviceAPointer, TID64Bit);
   Builder.CreateStore(TIDthElementOfDeviceC, PointerToTIDthElementOfDeviceA);
 
