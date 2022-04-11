@@ -3172,8 +3172,8 @@ def Redundant : Attr {
               ExprArgument<"Inputs">, StringArgument<"Out">, ExprArgument<"Outputs">,  StringArgument<"SchemeStr">, 
 
              EnumArgument<"Scheme", "SchemeType",
-                          ["MKE", "MKES", "XBSKE", "YBKSE", "XTSKE", "YTSKE"],
-                          ["mke", "mkes", "xbske", "ybske", "xtske", "ytske"]>
+                          ["MKE", "MKES", "HXBSKE", "HYBKSE", "LXBSKE", "LYBKSE", "HXTSKE", "HYTSKE", "LXTSKE", "LYTSKE"],
+                          ["mke", "mkes", "hxbske", "hybske", "lxbske", "lybske", "hxtske", "hytske", "lxtske", "lytske"]>
               
               
               ];

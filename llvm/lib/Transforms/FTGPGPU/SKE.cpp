@@ -37,7 +37,7 @@ class SKE : public AbstractPass{
 
 
     bool executeThePass(CallInst* FunctionCall, Auxiliary* PassAuxiliary) const override{
-
+        
     BasicBlock* CurrentBB = FunctionCall->getParent();
     BasicBlock* NextBB = CurrentBB->getNextNode();
     BasicBlock* PrevBB = CurrentBB->getPrevNode();
@@ -66,19 +66,19 @@ class SKE : public AbstractPass{
     Output* OutputObject = PassAuxiliary->OutputObject;
     
     
-    createAndAllocateVariableAndreMemCpy(Builder, OutputObject, LastInstructionOfPrevBB, PassAuxiliary->CudaMemCopy, IsLoop);
-
+    createAndAllocateVariableAndreMemCpy(Builder, OutputObject, LastInstructionOfPrevBB, PassAuxiliary->CudaMemCopy, IsLoop, 0);
 
     Builder.SetInsertPoint(FunctionCall);
     Instruction** Replications =  OutputObject->Replications;
-    for(int ReplicationIndex = 0; ReplicationIndex < NumberOfReplication - 1; ReplicationIndex++){
+    for(int ReplicationIndex = 0; ReplicationIndex < NumberOfReplication - 2; ReplicationIndex++){
       Instruction* Replication = Replications[ReplicationIndex];
+      errs() << *Replication << "\n";
       Value* LoadedNewArg = Builder.CreateLoad(Replication);
       NewArgs.push_back(LoadedNewArg);
     }
     errs() << *PassAuxiliary->CudaConfiguration[this->TypeIndex] << "BURASI\n";
     NewArgs.push_back(PassAuxiliary->CudaConfiguration[this->TypeIndex]);
-
+  
     FunctionType* NewKernelFunctionType = getTheNewKernelFunctionType(NewArgs, FunctionToReplicate->getReturnType());
 
     std::string NewKernelFunctionName = FunctionName + RevisitedSuffix + this->Based + this->Dimension;
@@ -89,7 +89,6 @@ class SKE : public AbstractPass{
 
 
     createHostRevisited(NewKernelFunction, FunctionToReplicate, PassAuxiliary);
-
     FunctionCall->eraseFromParent();  
 
     Instruction* ClonedConfigure = PassAuxiliary->CudaConfigureCall->clone();
@@ -102,16 +101,21 @@ class SKE : public AbstractPass{
     
     Value* OrijinalOutput = OutputObject->OutputAllocation;
     Value* FirstReplicationOutput = OutputObject->Replications[0];
-    Value* SecondReplicationOutput = OutputObject->Replications[1];
+    //Value* SecondReplicationOutput = OutputObject->Replications[1];
     Value* SizeOfOutput = OutputObject->MallocInstruction->getArgOperand(1);
 
     Value* LoadedOrijinalOutput = Builder.CreateLoad(OrijinalOutput);
     Value* LoadedFirstReplicationOutput = Builder.CreateLoad(FirstReplicationOutput);
-    Value* LoadedSecondReplicationOutput = Builder.CreateLoad(SecondReplicationOutput);
+   // Value* LoadedSecondReplicationOutput = Builder.CreateLoad(SecondReplicationOutput);
 
-    
-    Builder.CreateCall(OutputObject->MajorityVotingFunction, {LoadedOrijinalOutput, LoadedFirstReplicationOutput, LoadedSecondReplicationOutput, SizeOfOutput});
+    errs() << *OutputObject->DetectionFunction->getFunctionType() << "\n";
+    /*
+      Error GPU oluşturulacak.
 
+    */
+    /*
+    Builder.CreateCall(OutputObject->DetectionFunction, {LoadedOrijinalOutput, LoadedFirstReplicationOutput, SizeOfOutput});
+/*
     Value* ConfigurationToMultiplicate = PassAuxiliary->CudaConfiguration[this->TypeIndex];
     CallInst* DimensionCall = dyn_cast<CallInst>(PassAuxiliary->CudaConfiguration[this->TypeIndex+4]);
     Builder.SetInsertPoint(DimensionCall);
@@ -122,7 +126,7 @@ class SKE : public AbstractPass{
     }else{
       NewFunctionCall->setArgOperand(NewArgs.size() - 1, Builder.CreateUDiv(ConfigurationToMultiplicate, PassAuxiliary->Three32Bit));
     }
-
+    */
     return false;
     };
     

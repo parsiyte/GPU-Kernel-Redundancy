@@ -66,6 +66,7 @@ using namespace llvm;
 
 struct Output {
   Function* MajorityVotingFunction;
+  Function* DetectionFunction;
   AllocaInst* OutputAllocation;
   CallInst* MallocInstruction;
   Type* OutputType;
@@ -90,11 +91,16 @@ struct Auxiliary{
   FunctionCallee StreamCreateFunction;
   FunctionCallee CudaMemCopy;
   FunctionCallee CudaThreadSync;
+  FunctionCallee LogFunction;
+  FunctionCallee FreeFunction;
 
   Function*  CudaGlobalRegisterFunction;
   Function*  CudaRegisterFunction;
   Function*  CudaSetupArgument;
   Function*  CudaLaunch;
+  Function*  CudaMemFree;
+  Function*  MallocFunction;
+  Function*  CudaMalloc;
 
 /*
   Function*  ThreadIDX;
@@ -119,6 +125,7 @@ struct Auxiliary{
   ConstantPointerNull* Int32PtrNull;
 
   Value* Zero32Bit;
+  Value* Zero64Bit;
   Value* One32Bit;
   Value* Two32Bit;
   Value* Three32Bit;
@@ -437,12 +444,13 @@ inline CallInst* getTheMemoryFunction(std::vector<CallInst *> Functions, StringR
   CallInst* ReturnFuntion = nullptr;
   for(size_t Index = 0; Index < Functions.size(); Index++){
     CallInst* CurrentFuntion = Functions.at(Index);
-    BitCastInst* Bitcasted = dyn_cast<BitCastInst>(CurrentFuntion->getOperand(0));
+    BitCastInst* Bitcasted = dyn_cast_or_null<BitCastInst>(CurrentFuntion->getOperand(0));
+    if(Bitcasted == nullptr)
+      continue;
     LoadInst* Loaded = dyn_cast_or_null<LoadInst>(Bitcasted->getOperand(0));
     AllocaInst* Alloca = nullptr;
-    if(Loaded == nullptr){
+    if(Loaded == nullptr)
       Alloca = dyn_cast<AllocaInst>(Bitcasted->getOperand(0));
-      }
     else
       Alloca = dyn_cast<AllocaInst>(Loaded->getOperand(0));
       
@@ -461,8 +469,58 @@ inline CallInst* getTheMemoryFunction(std::vector<CallInst *> Functions, StringR
   return ReturnFuntion;
 }
 
+inline std::pair<Value*, Value*> createErrorValue(IRBuilder<> Builder, Instruction& LastInstructionOfPrevBB, Auxiliary* PassAuxiliary){
+  Instruction* ErrorAllocation = Builder.CreateAlloca(PassAuxiliary->Int32PtrType, 0, "ErrorCPU");
+  Instruction* MallocCall = Builder.CreateCall(PassAuxiliary->MallocFunction, {PassAuxiliary->Four64Bit});
+  Value* Bitcasted = Builder.CreateBitCast(MallocCall, PassAuxiliary->Int32PtrType);
+  Builder.CreateStore(Bitcasted, ErrorAllocation);
 
-inline void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToReplicate, Instruction& LastInstructionOfPrevBB, FunctionCallee CudaMemcpy, bool IsLoop){
+  Instruction* ErrorGPUAllocation = Builder.CreateAlloca(PassAuxiliary->Int32PtrType, 0, "ErrorGPU");
+  Value* BitcastedGPU = Builder.CreateBitCast(ErrorGPUAllocation, PointerType::get(PassAuxiliary->Int8PtrType, 0));
+  Builder.CreateCall(PassAuxiliary->CudaMalloc, {BitcastedGPU, PassAuxiliary->Four64Bit});
+
+/*
+
+  Instruction* ErrorGPUAllocationAddr = Builder.CreateAlloca(PointerType::get(PassAuxiliary->Int8PtrType, 0), 0, "ErrorGPU.addr");
+  Instruction* ErrorGPUAllocation = Builder.CreateAlloca(PassAuxiliary->Int32PtrType, 0, "ErrorGPU");
+  Builder.CreateStore(ErrorGPUAllocation, ErrorGPUAllocationAddr);
+  Value* LoadedErrorAddr = Builder.CreateLoad(ErrorGPUAllocationAddr);
+  Value* BitcastedGPU = Builder.CreateBitCast(MallocCall, PointerType::get(PassAuxiliary->Int8PtrType, 0));
+  Builder.CreateCall(PassAuxiliary->CudaMalloc, {BitcastedGPU, PassAuxiliary->Four64Bit});
+*/
+  Instruction* LoadedErrorCPU = Builder.CreateLoad(ErrorAllocation);
+  Value* BitcastedErrorCPU= Builder.CreateBitCast(LoadedErrorCPU, PassAuxiliary->Int8PtrType);
+  Instruction* LoadedErrorGPU = Builder.CreateLoad(ErrorGPUAllocation);
+  Value* BitcastedErrorGPU= Builder.CreateBitCast(LoadedErrorGPU, PassAuxiliary->Int8PtrType);
+
+  Builder.CreateCall(PassAuxiliary->CudaMemCopy, {BitcastedErrorGPU, BitcastedErrorCPU, PassAuxiliary->Four64Bit, PassAuxiliary->One32Bit});
+
+  return std::make_pair(ErrorAllocation, ErrorGPUAllocation);
+}
+
+
+inline Instruction* createCheckPoint(IRBuilder<> Builder, Output* OutputToReplicate, Instruction& LastInstructionOfPrevBB, Auxiliary* PassAuxiliary){
+  Value* Size = OutputToReplicate->MallocInstruction->getArgOperand(1);
+  Type* OutputType = OutputToReplicate->OutputType;
+
+  Instruction* CheckpointAllocation = Builder.CreateAlloca(OutputToReplicate->OutputType, 0, "Output_Checkpoint");
+  //errs() << *PassAuxiliary->MallocFunction.getCallee() << "\n";
+  Instruction* MallocCall = Builder.CreateCall(PassAuxiliary->MallocFunction, {Size});
+  Value* Bitcasted = Builder.CreateBitCast(MallocCall, OutputType);
+  Builder.CreateStore(Bitcasted, CheckpointAllocation);
+
+  Instruction* LoadedCheckpoint = Builder.CreateLoad(CheckpointAllocation);
+  Value* BitcastedCheckpoint = Builder.CreateBitCast(LoadedCheckpoint, PassAuxiliary->Int8PtrType);
+
+  Instruction* LoadedOutput = Builder.CreateLoad(OutputToReplicate->OutputAllocation);
+  Value* BitcastedOutput = Builder.CreateBitCast(LoadedOutput, PassAuxiliary->Int8PtrType);
+
+  Builder.CreateCall(PassAuxiliary->CudaMemCopy, {BitcastedCheckpoint, BitcastedOutput, Size, PassAuxiliary->Two32Bit});
+
+  return CheckpointAllocation;
+}
+
+inline void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* OutputToReplicate, Instruction& LastInstructionOfPrevBB, FunctionCallee CudaMemcpy, bool IsLoop, int Base){
   LLVMContext &Context = LastInstructionOfPrevBB.getContext();
   Type *Int32Type = Type::getInt32Ty(Context);
   Type *Int8PtrType = Type::getInt8PtrTy(Context);
@@ -471,33 +529,29 @@ inline void createAndAllocateVariableAndreMemCpy(IRBuilder<> Builder, Output* Ou
   Value* Size = OutputToReplicate->MallocInstruction->getArgOperand(1);
   Type* OutputType = OutputToReplicate->OutputType;
   Type* DestinationType = OutputToReplicate->DestinationType;
-  for(int Replication = 0; Replication < NumberOfReplication - 1; Replication++){
-    Builder.SetInsertPoint(OutputToReplicateAllocation->getNextNode());       
-    Instruction* NewAllocated = Builder.CreateAlloca(OutputType, nullptr,  OutputToReplicate->Name);
-    Instruction* ClonedMalloc = OutputToReplicate->MallocInstruction->clone();
-    CallInst* Cloned = dyn_cast<CallInst>(ClonedMalloc);
-    if(DestinationType == nullptr){
-      Cloned->setArgOperand(0, NewAllocated);
-    }else{
-      Value* BitcastedCloned = Builder.CreateBitCast(NewAllocated, DestinationType);
-      Cloned->setArgOperand(0, BitcastedCloned);
-    }
-    Cloned->insertAfter(OutputToReplicate->MallocInstruction);
-    Builder.SetInsertPoint(&LastInstructionOfPrevBB); 
-    Value* BitcastedCloned = Builder.CreateBitCast(Builder.CreateLoad(NewAllocated), Int8PtrType);
-    Value* LoadedOutput = Builder.CreateLoad(OutputToReplicateAllocation);
-    Value* BitcastedOutput = Builder.CreateBitCast(LoadedOutput, Int8PtrType);
-    Builder.CreateCall(CudaMemcpy, {BitcastedCloned, BitcastedOutput, Size, Three32Bit});
-    OutputToReplicate->Replications[Replication] = NewAllocated;
+  Builder.SetInsertPoint(&LastInstructionOfPrevBB);       
+  Instruction* NewAllocated = Builder.CreateAlloca(OutputType, nullptr,  OutputToReplicate->Name);
+  Instruction* ClonedMalloc = OutputToReplicate->MallocInstruction->clone();
+  CallInst* Cloned = dyn_cast<CallInst>(ClonedMalloc);
+  if(DestinationType == nullptr){
+    Cloned->setArgOperand(0, NewAllocated);
+  }else{
+    Value* BitcastedCloned = Builder.CreateBitCast(NewAllocated, DestinationType);
+    Cloned->setArgOperand(0, BitcastedCloned);
   }
+
+  Instruction* InsertLocation = dyn_cast<Instruction>(Cloned->getOperand(0));
+  Cloned->insertAfter(InsertLocation);
+  Builder.SetInsertPoint(Cloned->getNextNode()); 
+  Value* BitcastedCloned = Builder.CreateBitCast(Builder.CreateLoad(NewAllocated), Int8PtrType);
+  Value* LoadedOutput = Builder.CreateLoad(OutputToReplicateAllocation);
+  Value* BitcastedOutput = Builder.CreateBitCast(LoadedOutput, Int8PtrType);
+  Builder.CreateCall(CudaMemcpy, {BitcastedCloned, BitcastedOutput, Size, Three32Bit});
+  OutputToReplicate->Replications[Base] = NewAllocated;
+  
 }
 
-
 inline Function *createMajorityVoting(Module& M, PointerType *MajorityVotingPointerType, Auxiliary* PassAuxiliary, std::string MajorityVotingFunctionName) {
-
-  // std::to_string(MajorityVotingPointerType->getTypeID());
-
-  
 
   Function *CudaGlobalRegister = PassAuxiliary->CudaGlobalRegisterFunction;
   Function *CudaRegister = PassAuxiliary->CudaRegisterFunction;
@@ -518,23 +572,14 @@ inline Function *createMajorityVoting(Module& M, PointerType *MajorityVotingPoin
   Function::arg_iterator Args = MajorityVotingFunction->arg_begin();
 
   Value *A = Args++; A->setName("A");
-
   Value *B = Args++; B->setName("B");
-
   Value *C = Args++; C->setName("C");
-
   Value *Size = Args++; Size->setName("Size");
-
   BasicBlock *EntryBlock = BasicBlock::Create(M.getContext(), "entry", MajorityVotingFunction);
-
   IRBuilder<> Builder(EntryBlock); Builder.SetInsertPoint(EntryBlock);
-
   Value *Aptr = Builder.CreateAlloca(MajorityVotingPointerType, nullptr, "A.addr");
-
   Value *Bptr = Builder.CreateAlloca(MajorityVotingPointerType, nullptr, "B.addr");
-
   Value *Cptr = Builder.CreateAlloca(MajorityVotingPointerType, nullptr, "C.addr");
-
   Value *Sizeptr = Builder.CreateAlloca(Int64Type, nullptr, "size.addr");
 
   Builder.CreateStore(A, Aptr);
@@ -586,6 +631,86 @@ inline void createOrInsertMajorityVotingFunction(Module& M, Output* OutputObject
   OutputObject->MajorityVotingFunction = MajorityFunction;
 }
 
+inline Function *createDetection(Module& M, PointerType *DetectionPointerType, Auxiliary* PassAuxiliary, std::string DetectionFunctionName) {
+
+  Function *CudaGlobalRegister = PassAuxiliary->CudaGlobalRegisterFunction;
+  Function *CudaRegister = PassAuxiliary->CudaRegisterFunction;
+  Function *CudaSetupArgument = PassAuxiliary->CudaSetupArgument;
+  Function *CudaLaunch = PassAuxiliary->CudaLaunch;
+
+  Type *Int64Type = PassAuxiliary->Int64Type;
+  Type *Int32Type = PassAuxiliary->Int32Type;
+  Type *Int32PtrType = PassAuxiliary->Int32PtrType;
+  Value *Zero32bit = PassAuxiliary->Zero32Bit;
+
+  PointerType *Int8PtrType = PassAuxiliary->Int8PtrType;
+
+  FunctionCallee DetectionCallee = M.getOrInsertFunction(DetectionFunctionName, PassAuxiliary->VoidType, DetectionPointerType, DetectionPointerType, Int64Type, Int32PtrType);
+
+  std::vector<Value *> Parameters;
+  Function *DetectionFunction = dyn_cast<Function>(DetectionCallee.getCallee());
+
+  DetectionFunction->setCallingConv(CallingConv::C);
+  Function::arg_iterator Args = DetectionFunction->arg_begin();
+
+  Value *A = Args++; A->setName("A");
+  Value *B = Args++; B->setName("B");
+  Value *Size = Args++; Size->setName("Size");
+  Value *Error = Args++; Error->setName("Error");
+  BasicBlock *EntryBlock = BasicBlock::Create(M.getContext(), "entry", DetectionFunction);
+  IRBuilder<> Builder(EntryBlock); Builder.SetInsertPoint(EntryBlock);
+  Value *Aptr = Builder.CreateAlloca(DetectionPointerType, nullptr, "A.addr");
+  Value *Bptr = Builder.CreateAlloca(DetectionPointerType, nullptr, "B.addr");
+  Value *Sizeptr = Builder.CreateAlloca(Int64Type, nullptr, "size.addr");
+  Value *ErrorPtr = Builder.CreateAlloca(Int32PtrType, nullptr, "error.addr");
+
+  Builder.CreateStore(A, Aptr);
+  Builder.CreateStore(B, Bptr);
+  Builder.CreateStore(Size, Sizeptr);
+  Builder.CreateStore(Error, ErrorPtr);
+
+  Parameters.push_back(Aptr);
+  Parameters.push_back(Bptr);
+  Parameters.push_back(Sizeptr);
+  Parameters.push_back(ErrorPtr);
+
+  int Offset = 0;
+  int SizeParameter = 8;
+  for (unsigned long Index = 0; Index < Parameters.size(); Index++) {
+    Value *Parameter = Parameters.at(Index);
+    Value *BitcastParameter = Builder.CreateBitCast(Parameter, Int8PtrType);
+    Value *OffsetValue = ConstantInt::get(Int64Type, Offset);
+
+    if(dyn_cast_or_null<PointerType>(Parameter->getType()) == nullptr) SizeParameter = 4;
+    else SizeParameter = 8;
+
+    Value *SizeValue = ConstantInt::get(Int64Type, SizeParameter);
+    Value *CudaSetupArgumentCall = Builder.CreateCall( CudaSetupArgument, {BitcastParameter, SizeValue, OffsetValue});
+    Instruction *IsError = dyn_cast<Instruction>( Builder.CreateICmpEQ(CudaSetupArgumentCall, Zero32bit));
+    if (Index == 0) Builder.CreateRetVoid(); 
+
+    Instruction *SplitPoint = SplitBlockAndInsertIfThen(IsError, IsError->getNextNode(), false);
+
+    SplitPoint->getParent()->setName("setup.next");
+
+    Builder.SetInsertPoint(SplitPoint);
+    Offset += SizeParameter;
+  }
+
+  Builder.CreateCall(CudaLaunch, {Builder.CreateBitCast( DetectionFunction , Int8PtrType)});
+  registerTheFunction(DetectionFunction, PassAuxiliary);
+
+  return DetectionFunction;
+}
+
+inline void createOrInsertDetectionFunction(Module& M, Output* OutputObject, Auxiliary* PassAuxiliary){
+  Type* OutputType = OutputObject->OutputType;
+  std::string DetectionFunctionName = "Detection" + std::to_string(OutputType->getPointerElementType()->getTypeID()); 
+  Function* DetectionFunction = M.getFunction(DetectionFunctionName);
+
+  if(DetectionFunction == nullptr) DetectionFunction = createDetection(M, dyn_cast<PointerType>(OutputType), PassAuxiliary, DetectionFunctionName);
+  OutputObject->DetectionFunction = DetectionFunction;
+}
 
 inline std::vector<Function * > getValidKernels(NamedMDNode *Annotations){
   std::vector<Function *> ValidKernels;
@@ -703,6 +828,108 @@ inline Function* createDeviceMajorityVotingFunction(Module& M, Auxiliary* PassAu
   return MajorityVotingFunction;
 }
 
+inline Function* createDeviceDetectionFunction(Module& M, Auxiliary* PassAuxiliary, PointerType* OutputPointerType, std::string DetectionFunctionName){
+  LLVMContext& Context = M.getContext();
+  FunctionCallee DetectionCallee = M.getOrInsertFunction(DetectionFunctionName, PassAuxiliary->VoidType, OutputPointerType, OutputPointerType, PassAuxiliary->Int64Type, PassAuxiliary->Int32PtrType);
+  errs() << *DetectionCallee.getFunctionType() << "\n";
+
+  Function* DetectionFunction = dyn_cast<Function>(DetectionCallee.getCallee());
+  DetectionFunction->setCallingConv(CallingConv::C);
+
+  BasicBlock* EntryBlock = BasicBlock::Create(Context, "entry", DetectionFunction);
+  BasicBlock *IfBlock = BasicBlock::Create(Context, "If", DetectionFunction);
+  BasicBlock *SecondIfBlock = BasicBlock::Create(Context, "If", DetectionFunction);
+  BasicBlock *TailBlock = BasicBlock::Create(Context, "Tail", DetectionFunction);
+
+
+  IRBuilder<> Builder(EntryBlock);    
+  Function::arg_iterator Args = DetectionFunction->arg_begin();
+  Value *DeviceA = Args++;
+  DeviceA->setName("data1");
+  Value *DeviceB = Args++;
+  DeviceB->setName("data2");
+  Value *ArraySize = Args++;
+  ArraySize->setName("size");
+  Value *Error = Args;
+  Error->setName("Error");
+
+  AllocaInst *DeviceAAllocation = Builder.CreateAlloca(OutputPointerType, nullptr, "data1.addr");
+  AllocaInst *DeviceBAllocation = Builder.CreateAlloca(OutputPointerType, nullptr, "data2.addr");
+  AllocaInst *DeviceArraySizeAllocation = Builder.CreateAlloca(PassAuxiliary->Int64Type, nullptr, "size.addr");
+  AllocaInst *ErrorAllocation = Builder.CreateAlloca(PassAuxiliary->Int32PtrType, nullptr, "error.addr");
+  Value *ThreadIDXptr = Builder.CreateAlloca(PassAuxiliary->Int32Type, nullptr, "ThreadIDX");
+  Value *ThreadIDYptr = Builder.CreateAlloca(PassAuxiliary->Int32Type, nullptr, "ThreadIDY");
+  Value *ThreadIDptr = Builder.CreateAlloca(PassAuxiliary->Int32Type, nullptr, "ThreadID");
+  Builder.CreateStore(DeviceA, DeviceAAllocation);
+  Builder.CreateStore(DeviceB, DeviceBAllocation);
+  Builder.CreateStore(ArraySize, DeviceArraySizeAllocation);
+  Builder.CreateStore(Error, ErrorAllocation);
+
+  Value *BlockID = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[0]);
+  Value *BlockDimension = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[4]);
+  Value *BlockXGrid = Builder.CreateMul(BlockDimension, BlockID,"mul");
+  Value *ThreadXNumber = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[2]);
+  Value *ThreadIDX = Builder.CreateAdd(BlockXGrid, ThreadXNumber, "add");
+  Builder.CreateStore(ThreadIDX, ThreadIDXptr);
+
+  Value *BlockIDY = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[1]);
+  Value *BlockDimensionY = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[5]);
+  Value *BlockXGridY = Builder.CreateMul(BlockIDY, BlockDimensionY,"mul");
+  Value *ThreadNumberY = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[3]);
+  Value *ThreadIDY = Builder.CreateAdd(BlockXGridY, ThreadNumberY, "add");
+  Builder.CreateStore(ThreadIDY, ThreadIDYptr);
+
+  Value *SecondBlockDimension = Builder.CreateCall(PassAuxiliary->CudaDimensionFunctions[4]);
+  Value *ThreadIDYptrXSecondBlockDimension = Builder.CreateMul(SecondBlockDimension, Builder.CreateLoad(ThreadIDYptr),"mul");
+  Value *ThreadID = Builder.CreateAdd(ThreadIDYptrXSecondBlockDimension, Builder.CreateLoad(ThreadIDXptr), "add");
+  Builder.CreateStore(ThreadID, ThreadIDptr);
+
+  Value *TID = Builder.CreateLoad(ThreadIDptr);
+  Value *Extented = Builder.CreateSExt(TID, PassAuxiliary->Int64Type);
+  Value *ArraySizeValue = Builder.CreateLoad(DeviceArraySizeAllocation);
+
+  Value *SizeTIDCMP = Builder.CreateICmpSLT(Extented, ArraySizeValue);
+  Builder.CreateCondBr(SizeTIDCMP, IfBlock, TailBlock);
+
+  Builder.SetInsertPoint(IfBlock);
+  Value *DeviceBPointer = Builder.CreateLoad(DeviceBAllocation);
+
+  TID = Builder.CreateLoad(ThreadIDptr);
+  Value *TID64Bit = Builder.CreateSExt(TID, PassAuxiliary->Int64Type);
+  Value *PointerToTIDthElementOfDeviceB = Builder.CreateInBoundsGEP(DeviceBPointer, TID64Bit);
+  Value *TIDthElementOfDeviceB = Builder.CreateLoad(PointerToTIDthElementOfDeviceB);
+
+  Value *DeviceAPointer = Builder.CreateLoad(DeviceAAllocation);
+  TID = Builder.CreateLoad(ThreadIDptr);
+  TID64Bit = Builder.CreateSExt(TID, PassAuxiliary->Int64Type);
+  Value *PointerToTIDthElementOfDeviceA = Builder.CreateInBoundsGEP(DeviceAPointer, TID64Bit);
+  Value *TIDthElementOfDeviceA = Builder.CreateLoad(PointerToTIDthElementOfDeviceA);
+  Value *DeviceADeviceBCMP;
+
+  if( TIDthElementOfDeviceA->getType()->isFloatTy() || TIDthElementOfDeviceA->getType()->isDoubleTy())
+   DeviceADeviceBCMP = Builder.CreateFCmpOEQ(TIDthElementOfDeviceA, TIDthElementOfDeviceB);
+  else
+    DeviceADeviceBCMP = Builder.CreateICmpEQ(TIDthElementOfDeviceA, TIDthElementOfDeviceB);
+
+  Builder.CreateCondBr(DeviceADeviceBCMP, SecondIfBlock, TailBlock);
+
+  Builder.SetInsertPoint(SecondIfBlock);
+
+
+
+  Value* ErrorPointer = Builder.CreateLoad(ErrorAllocation);
+  Value *PointerToFirstthElementOfError= Builder.CreateInBoundsGEP(ErrorPointer, PassAuxiliary->Zero32Bit);
+  Builder.CreateStore(PassAuxiliary->One32Bit, PointerToFirstthElementOfError);
+  
+
+  Builder.CreateBr(TailBlock);
+
+  Builder.SetInsertPoint(TailBlock);
+  
+  Builder.CreateRetVoid();
+
+  return DetectionFunction;
+}
 
 inline void createHostRevisited(Function* NewKernelFunction, Function* OriginalFunction, Auxiliary* PassAuxiliary){
 

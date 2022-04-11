@@ -2512,16 +2512,26 @@ void CodeGenFunction::addRedundantMetadata(llvm::BasicBlock *block, ArrayRef<con
           MetaData += " Scheme &MKE";
         else if(Scheme == RedundantAttr::SchemeType::mkes)
           MetaData += " Scheme &MKES";
-        else if(Scheme == RedundantAttr::SchemeType::xbske)
-          MetaData += " Scheme &XBSKE";
-        else if(Scheme == RedundantAttr::SchemeType::ybske){
-          MetaData += " Scheme &YBSKE";
-        }
-        else if(Scheme == RedundantAttr::SchemeType::xtske){
-          MetaData += " Scheme &XTSKE";
-        }
-        else if(Scheme == RedundantAttr::SchemeType::ytske)
-          MetaData += " Scheme &YTSKE";
+
+        else if(Scheme == RedundantAttr::SchemeType::hxbske)
+          MetaData += " Scheme &HXBSKE";
+        else if(Scheme == RedundantAttr::SchemeType::hybske)
+          MetaData += " Scheme &HYBSKE";
+
+        else if(Scheme == RedundantAttr::SchemeType::lxbske)
+          MetaData += " Scheme &LXBSKE";
+        else if(Scheme == RedundantAttr::SchemeType::lybske)
+          MetaData += " Scheme &LYBSKE";
+
+        else if(Scheme == RedundantAttr::SchemeType::hxtske)
+          MetaData += " Scheme &HXTSKE";
+        else if(Scheme == RedundantAttr::SchemeType::hytske)
+          MetaData += " Scheme &HYTSKE";
+
+        else if(Scheme == RedundantAttr::SchemeType::lxtske)
+          MetaData += " Scheme &LXTSKE";
+        else if(Scheme == RedundantAttr::SchemeType::lytske)
+          MetaData += " Scheme &LYTSKE";
         else
           MetaData += "";
 
