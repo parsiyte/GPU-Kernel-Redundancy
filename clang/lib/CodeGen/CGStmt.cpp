@@ -2532,6 +2532,10 @@ void CodeGenFunction::addRedundantMetadata(llvm::BasicBlock *block, ArrayRef<con
           MetaData += " Scheme &LXTSKE";
         else if(Scheme == RedundantAttr::SchemeType::lytske)
           MetaData += " Scheme &LYTSKE";
+        else if(Scheme == RedundantAttr::SchemeType::hmke)
+          MetaData += " Scheme &HMKE";
+        else if(Scheme == RedundantAttr::SchemeType::hmkes)
+          MetaData += " Scheme &HMKES";
         else
           MetaData += "";
 

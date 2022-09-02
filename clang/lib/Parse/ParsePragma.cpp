@@ -1087,19 +1087,7 @@ bool Parser::HandlePragmaRedundant(RedundantHint &Hint) {
   
   Index = 0;
   ConsumeAnyToken();
-  /*
-  while (Tok.isNot(tok::eof)){
-    auto Redundance = Tok.getIdentifierInfo()->getName();
-    llvm::errs() << Redundance << "++\n";
-    Hint.RedundanceScheme = Redundance;
-    //Hint.RedundanceScheme = ParseConstantExpression().get();
-    Index++;
-    ConsumeAnyToken();
-  }
- */
   
-    // Tokens following an error in an ill-formed constant expression will
-    // remain in the token stream and must be removed.
   if (Tok.isNot(tok::eof)) {
     printf("Not EOF\n");
     llvm::errs() << Tok.getIdentifierInfo()->getName();

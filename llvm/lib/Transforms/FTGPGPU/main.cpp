@@ -31,7 +31,7 @@ struct Device : public ModulePass {
     PassAuxiliary->Int32PtrType = PointerType::getInt32PtrTy(Context);
 
     PassAuxiliary->Zero32Bit = ConstantInt::get(PassAuxiliary->Int32Type, 0);
-    PassAuxiliary->Zero32Bit = ConstantInt::get(PassAuxiliary->Int64Type, 0);
+    PassAuxiliary->Zero64Bit = ConstantInt::get(PassAuxiliary->Int64Type, 0);
     PassAuxiliary->One32Bit = ConstantInt::get(PassAuxiliary->Int32Type, 1);
     PassAuxiliary->Two32Bit = ConstantInt::get(PassAuxiliary->Int32Type, 2);
 
@@ -42,7 +42,8 @@ struct Device : public ModulePass {
     PassAuxiliary->CudaDimensionFunctions[3] = M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.tid.y", PassAuxiliary->Int32Type); //threadId.y
     PassAuxiliary->CudaDimensionFunctions[4] = M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.ntid.x", PassAuxiliary->Int32Type); //blockDim.x
     PassAuxiliary->CudaDimensionFunctions[5] = M.getOrInsertFunction("llvm.nvvm.read.ptx.sreg.ntid.y", PassAuxiliary->Int32Type); //blockDim.y
-    
+
+    char MemoryTypes[2] = {'h', 'l'};
     char Dimensions[2] = {'x', 'y'};
     char Baseds[2] = {'b', 't'};
 
@@ -51,7 +52,7 @@ struct Device : public ModulePass {
     MDNode *KernelNode = MDNode::get(Context, MDString::get(Context, "kernel"));
     MDNode *TempN = MDNode::get(Context, ConstantAsMetadata::get(ConstantInt::get(PassAuxiliary->Int32Type, 1)));
     MDNode *Con = MDNode::concatenate(KernelNode, TempN);
-    
+
     for (auto& Kernel : ValidKernels) {
       FunctionType* FuncType = Kernel->getFunctionType();
       unsigned int NumberOfParam = FuncType->getNumParams();
@@ -62,54 +63,58 @@ struct Device : public ModulePass {
         continue;
       }
       std::vector<Type *> RevisitedType;
-      std::vector<Type *> SplitType;
       for(size_t ArgIndex = 0; ArgIndex < Kernel->arg_size(); ArgIndex++){
         RevisitedType.push_back(Kernel->getArg(ArgIndex)->getType());
-        SplitType.push_back(Kernel->getArg(ArgIndex)->getType());
 
       }
+      RevisitedType.push_back(PassAuxiliary->Int32Type);
 
       for(int ReplicationIndex = 0; ReplicationIndex < NumberOfReplication - 1; ReplicationIndex++){
         RevisitedType.push_back(OutputType);
       }
 
-      RevisitedType.push_back(PassAuxiliary->Int32Type);
-      SplitType.push_back(PassAuxiliary->Int32Type);
-      SplitType.push_back(PassAuxiliary->Int32Type);
 
-      FunctionType* RevisitedKernelType = FunctionType::get(PassAuxiliary->VoidType, RevisitedType, false);
-      FunctionType* SplitKernelType = FunctionType::get(PassAuxiliary->VoidType, SplitType, false);
-      for(int BasedIndex = 0; BasedIndex < 2; BasedIndex++){
-        for(int DimensionIndex = 0; DimensionIndex < 2; DimensionIndex++){
-          char Dimension = Dimensions[DimensionIndex];
-          char Based = Baseds[BasedIndex];
-          int TypeIndex = 2 * BasedIndex + DimensionIndex;
-          std::string NewKernelFunctionName = FunctionName + RevisitedSuffix + Based + Dimension;
-          
-          FunctionCallee NewKernelAsCallee =  M.getOrInsertFunction(NewKernelFunctionName, RevisitedKernelType);
-          Function* NewKernelFunction = dyn_cast<Function>(NewKernelAsCallee.getCallee());
+      FunctionType* RevisitedHighMemoryKernelType = FunctionType::get(PassAuxiliary->VoidType, RevisitedType, false);
+      RevisitedType.pop_back();
+      FunctionType* RevisitedLowMemoryKernelType = FunctionType::get(PassAuxiliary->VoidType, RevisitedType, false);
 
+      for(int MemoryIndex = 0; MemoryIndex < 2; MemoryIndex++){
+        for(int BasedIndex = 0; BasedIndex < 2; BasedIndex++){
+          for(int DimensionIndex = 0; DimensionIndex < 2; DimensionIndex++){
+            char MemoryType = MemoryTypes[MemoryIndex];
+            char Dimension = Dimensions[DimensionIndex];
+            char Based = Baseds[BasedIndex];
+            int TypeIndex = 2 * BasedIndex + DimensionIndex;
 
-          ValueToValueMapTy VMap;
-          SmallVector<ReturnInst*, 8> Returns;
-          Function::arg_iterator DestI = NewKernelFunction->arg_begin();
-          for (const Argument & I : Kernel->args())
-            if (VMap.count(&I) == 0) {    
-              DestI->setName(I.getName()); 
-              VMap[&I] = &*DestI++;       
-            }
-          
-          CloneFunctionInto(NewKernelFunction,Kernel,VMap,false,Returns);
-          
-
-          //alterTheFunction(NewKernelFunction, PassAuxiliary, TypeIndex);
+            FunctionType* RevisitedKernelType = (MemoryType == 'h') ? RevisitedHighMemoryKernelType : RevisitedLowMemoryKernelType; 
+            int RedundantNumber = (MemoryType == 'h') ? 2 : 1; 
+            std::string NewKernelFunctionName = FunctionName + RevisitedSuffix + MemoryType + Based + Dimension;
+            FunctionCallee NewKernelAsCallee =  M.getOrInsertFunction(NewKernelFunctionName, RevisitedKernelType);
+            Function* NewKernelFunction = dyn_cast<Function>(NewKernelAsCallee.getCallee());
 
 
-          Annotations->addOperand(MDNode::concatenate(MDNode::get(Context, ValueAsMetadata::get(NewKernelFunction)), Con));
-       }
+            ValueToValueMapTy VMap;
+            SmallVector<ReturnInst*, 8> Returns;
+            Function::arg_iterator DestI = NewKernelFunction->arg_begin();
+            for (const Argument & I : Kernel->args())
+              if (VMap.count(&I) == 0) {
+                DestI->setName(I.getName());
+                VMap[&I] = &*DestI++;
+              }
+
+            CloneFunctionInto(NewKernelFunction, Kernel, VMap, false, Returns);
+
+            alterTheFunction(NewKernelFunction, PassAuxiliary, TypeIndex, RedundantNumber);
+
+
+            Annotations->addOperand(MDNode::concatenate(MDNode::get(Context, ValueAsMetadata::get(NewKernelFunction)), Con));
+          }
+        }
       }
+      
 
-          
+
+
       std::string DetectionFunctionName = "Detection" + std::to_string(OutputType->getPointerElementType()->getTypeID());
       
       if(M.getFunction(DetectionFunctionName) == nullptr) {
@@ -117,8 +122,16 @@ struct Device : public ModulePass {
         Annotations->addOperand(MDNode::concatenate(MDNode::get(Context, ValueAsMetadata::get(DetectionFunction)), Con));
       }
 
+
+      std::string MajorityFunctionName = "majorityVoting" + std::to_string(OutputType->getPointerElementType()->getTypeID());
+
+      if(M.getFunction(MajorityFunctionName) == nullptr) {
+        Function* MajorityVotingFunction = createDeviceMajorityVotingFunction(M, PassAuxiliary, OutputPtrType, MajorityFunctionName);
+        Annotations->addOperand(MDNode::concatenate(MDNode::get(Context, ValueAsMetadata::get(MajorityVotingFunction)), Con));
+      }
+
     }
-    
+
     return false;
   }
 
@@ -146,26 +159,28 @@ struct Host : public ModulePass {
     PassAuxiliary->Three32Bit = ConstantInt::get(PassAuxiliary->Int32Type, 3);
     PassAuxiliary->Four64Bit = ConstantInt::get(PassAuxiliary->Int64Type, 4);
     PassAuxiliary->Eight64Bit = ConstantInt::get(PassAuxiliary->Int64Type, 8);
+    PassAuxiliary->Twelwe64Bit = ConstantInt::get(PassAuxiliary->Int64Type, 12);
     PassAuxiliary->CudaStreamNonBlocking = PassAuxiliary->One32Bit;
     PassAuxiliary->MinusOne32Bit = ConstantInt::get(PassAuxiliary->Int32Type, -1);
 
     PassAuxiliary->CudaMemCopy =  M.getFunction("cudaMemcpy");
     PassAuxiliary->CudaMalloc =  M.getFunction("cudaMalloc");
     PassAuxiliary->CudaMemFree =  M.getFunction("cudaFree");
-    PassAuxiliary->CudaGlobalRegisterFunction = M.getFunction("__cuda_register_globals"); 
+    PassAuxiliary->CudaGlobalRegisterFunction = M.getFunction("__cuda_register_globals");
     PassAuxiliary->CudaRegisterFunction = M.getFunction("__cudaRegisterFunction");
     PassAuxiliary->CudaSetupArgument =  M.getFunction("cudaSetupArgument");
     PassAuxiliary->CudaLaunch = M.getFunction("cudaLaunch");
-    PassAuxiliary->CudaThreadSync = M.getOrInsertFunction("cudaThreadSynchronize",PassAuxiliary->VoidType);
+    PassAuxiliary->CudaThreadSync = M.getOrInsertFunction("cudaDeviceSynchronize",PassAuxiliary->VoidType);
     PassAuxiliary->Int8PtrNull = ConstantPointerNull::get(PassAuxiliary->Int8PtrType);
     PassAuxiliary->Int32PtrNull = ConstantPointerNull::get(PassAuxiliary->Int32PtrType);
 
     FunctionType* MallocFunctionType = FunctionType::get(PassAuxiliary->Int8PtrType, {PassAuxiliary->Int64Type});
     FunctionCallee MallocCalle = M.getOrInsertFunction("malloc", MallocFunctionType);
     Function* MallocFunction = dyn_cast<Function>(MallocCalle.getCallee());
-    MallocFunction->setReturnDoesNotAlias();
+    //MallocFunction->setReturnDoesNotAlias();
     PassAuxiliary->MallocFunction = MallocFunction;
-    
+
+
     PassAuxiliary->FreeFunction = M.getOrInsertFunction("free", PassAuxiliary->VoidType, PassAuxiliary->Int8PtrType);
 
     std::vector<CallInst * > CudaMemCpyFunctions;
@@ -176,40 +191,50 @@ struct Host : public ModulePass {
           if (CallInst *FunctionCall = dyn_cast<CallInst>(CurrentInstruction)){
               StringRef FunctionName = FunctionCall->getCalledFunction()->getName();
               if(isReplicate(FunctionCall)){
-                 StringRef Metadata = getMetadataString(FunctionCall);  
+                 StringRef Metadata = getMetadataString(FunctionCall);
                  std::vector<std::string> MetadataExtract = parseData(Metadata);
-                  
+
                  std::string OutputName = MetadataExtract[1];
                  std::string Scheme = MetadataExtract[2];
-                 
+
                  Output* OutputObject = (Output*)malloc (sizeof(Output));
-                 
+
                  PassAuxiliary->CudaMallocFunction =  getTheMemoryFunction(CudaMallocFunctions, OutputName, OutputObject);
                  PassAuxiliary->CudaMemCpyFunction =  getTheMemoryFunction(CudaMemCpyFunctions, OutputName);
 
-                 createOrInsertDetectionFunction(M, OutputObject, PassAuxiliary);
 
-                
+
                  CudaConfigure(PassAuxiliary->CudaConfigureCall, PassAuxiliary->CudaConfiguration);
+
 
                  PassAuxiliary->OutputObject = OutputObject;
                  char MemoryType = Scheme[0];
                  char Dimension = Scheme[1];
                  char Based = Scheme[2];
+                 errs() << Scheme << "\n";
+
+
+                 if(tolower(MemoryType) == 'h')
+                  createOrInsertMajorityVotingFunction(M, OutputObject, PassAuxiliary);
+                 else
+                  createOrInsertDetectionFunction(M, OutputObject, PassAuxiliary);
+
+
+
+
                  FTGPGPUPass* MyPass = new FTGPGPUPass(FunctionCall, PassAuxiliary);
 
-                
-                
-                 if(Scheme == "MKE"){
-                   MyPass->setPass(new MKE());
-                 }else if (Scheme == "MKES") {
-                   MyPass->setPass(new MKE(true));
+
+                 if(Scheme == "MKE" or Scheme.substr(1) == "MKE"){
+                   MyPass->setPass(new MKE(MemoryType));
+                 }else if (Scheme == "MKES" or Scheme.substr(1) == "MKES") {
+                   MyPass->setPass(new MKE(MemoryType, true));
                  }else if (Scheme.substr(3) == "SKE"){
-                  MyPass->setPass(new SKE(Dimension, Based));
+                  MyPass->setPass(new SKE(MemoryType, Dimension, Based));
                   CurrentInstruction++;
                  }
-                 
-                  
+
+
 
                 MyPass->runThePass();
               }else if (FunctionName == "cudaConfigureCall") {
@@ -232,10 +257,10 @@ struct Host : public ModulePass {
         }
       }
     }
-  
 
 
-  
+
+
     return true;
   }
 
@@ -263,4 +288,3 @@ static RegisterStandardPasses YHost(PassManagerBuilder::EP_EarlyAsPossible,
                                    legacy::PassManagerBase &PM) {
                                   PM.add(new Host());
                                 });
-

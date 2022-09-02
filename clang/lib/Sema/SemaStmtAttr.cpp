@@ -336,31 +336,26 @@ static Attr *handleRedundantAttr(Sema &S, Stmt *St, const ParsedAttr &A, SourceR
   llvm::errs() << SchemeName << "\n";
   if( SchemeName == "MKES") 
     Scheme = RedundantAttr::mkes;
-
   else if(SchemeName == "HXBSKE")
     Scheme =RedundantAttr::hxbske;
-  
   else if(SchemeName == "HYBSKE")
     Scheme =RedundantAttr::hybske;
-  
   else if(SchemeName == "LXBSKE")
     Scheme =RedundantAttr::lxbske;
-  
   else if(SchemeName == "LYBSKE")
     Scheme =RedundantAttr::lybske;
-  
   else if(SchemeName == "HXTSKE")
     Scheme =RedundantAttr::hxtske;
-  
   else if(SchemeName == "HYTSKE")
     Scheme =RedundantAttr::hytske;
-  
   else if(SchemeName == "LXTSKE")
     Scheme =RedundantAttr::lxtske;
-  
   else if(SchemeName == "LYTSKE")
     Scheme =RedundantAttr::lytske;
-  
+  else if(SchemeName == "HMKE")
+    Scheme =RedundantAttr::hmke;
+  else if(SchemeName == "HMKES")
+    Scheme =RedundantAttr::hmkes;
   else
     Scheme =RedundantAttr::mke;
 
