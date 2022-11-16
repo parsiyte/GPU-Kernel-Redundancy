@@ -11,7 +11,7 @@ ninja
 ```
 Please keep in mind that "ninja" command might fail due to memory usage. It resumes where it left off when restarted.
 
-## USAGE
+## USAGE
 
 Modify the source code by inserting the following pragma notation after the function call you wish to increase its reliability.
 
